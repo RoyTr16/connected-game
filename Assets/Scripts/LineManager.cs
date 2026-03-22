@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public class LineManager : MonoBehaviour
@@ -21,53 +22,56 @@ public class LineManager : MonoBehaviour
 
     public void OnNodeClicked(TransitNode clickedNode)
     {
-        // Case 1: The player clicked the exact same node twice. (Deselect it)
         if (_firstSelectedNode == clickedNode)
         {
-            clickedNode.ToggleSelection(); // Turns it back to green
-            _firstSelectedNode = null;     // Clear our memory
+            clickedNode.ToggleSelection();
+            _firstSelectedNode = null;
             return;
         }
 
-        // Case 2: This is the very first node the player is clicking
         if (_firstSelectedNode == null)
         {
             _firstSelectedNode = clickedNode;
-            _firstSelectedNode.ToggleSelection(); // Turns it yellow
+            _firstSelectedNode.ToggleSelection();
         }
-        // Case 3: We already have a first node, so this is the destination!
         else
         {
-            // Draw the physical route line
-            DrawRouteLine(_firstSelectedNode.transform.position, clickedNode.transform.position);
+            // --- NEW: Ask the Pathfinder for the route ---
+            List<TransitNode> path = Pathfinder.FindPath(_firstSelectedNode, clickedNode);
 
-            // Turn the first node back to its original color (since the connection is made)
+            if (path != null && path.Count > 0)
+            {
+                DrawRouteLine(path);
+            }
+
             _firstSelectedNode.ToggleSelection();
-
-            // Clear our memory so the player can draw a brand new route
             _firstSelectedNode = null;
         }
     }
 
-    private void DrawRouteLine(Vector3 startPos, Vector3 endPos)
+    // --- NEW: Draw along multiple waypoints instead of just two ---
+    private void DrawRouteLine(List<TransitNode> path)
     {
-        // Create a new empty GameObject to hold the line
         GameObject routeObj = new GameObject("TransitRoute");
-        routeObj.transform.SetParent(this.transform); // Keep the hierarchy clean
+        routeObj.transform.SetParent(this.transform);
 
-        // Add and configure the LineRenderer
         LineRenderer lr = routeObj.AddComponent<LineRenderer>();
-        lr.positionCount = 2;
-        lr.SetPosition(0, startPos);
-        lr.SetPosition(1, endPos);
+
+        // Give the LineRenderer exactly as many points as our path has
+        lr.positionCount = path.Count;
+
+        for (int i = 0; i < path.Count; i++)
+        {
+            lr.SetPosition(i, path[i].transform.position);
+        }
 
         lr.startWidth = routeWidth;
         lr.endWidth = routeWidth;
-        lr.numCapVertices = 4; // Rounded ends
+        lr.numCapVertices = 4;
+        lr.numCornerVertices = 4; // Rounds out the sharp turns on the street corners
 
         if (routeMaterial != null) lr.material = routeMaterial;
 
-        // Apply the color (Requires a material like Sprites-Default to show up)
         lr.startColor = routeColor;
         lr.endColor = routeColor;
     }
