@@ -418,6 +418,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1538031041}
   - component: {fileID: 1538031040}
+  - component: {fileID: 1538031042}
   m_Layer: 0
   m_Name: GameManager
   m_TagString: Untagged
@@ -452,6 +453,21 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1538031042
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1538031039}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1cd65e0afc2df3942a71a882c813c9a5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LineManager
+  routeMaterial: {fileID: 10754, guid: 0000000000000000f000000000000000, type: 0}
+  routeWidth: 6
+  routeColor: {r: 0, g: 0, b: 1, a: 1}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

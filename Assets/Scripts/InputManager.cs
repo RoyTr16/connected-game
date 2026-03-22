@@ -36,12 +36,13 @@ public class InputManager : MonoBehaviour
         // 4. Did we hit anything with a collider?
         if (hit.collider != null)
         {
-            // Try to find the TransitNode script on the object we just poked
             TransitNode node = hit.collider.GetComponent<TransitNode>();
 
             if (node != null)
             {
-                node.ToggleSelection();
+                // INSTEAD of calling node.ToggleSelection() directly,
+                // we hand the node over to the LineManager.
+                LineManager.Instance.OnNodeClicked(node);
             }
         }
     }
