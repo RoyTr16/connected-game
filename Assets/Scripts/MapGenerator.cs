@@ -14,7 +14,7 @@ public class MapGenerator : MonoBehaviour
 
     [Header("Simulation Objects")]
     public GameObject intersectionNodePrefab;
-    public float nodeMergeRadius = 100f; // Kept your updated radius
+    public float nodeMergeRadius = 100f;
 
     private float mapScale = 111000f;
     private Vector2 originLonLat;
@@ -22,16 +22,22 @@ public class MapGenerator : MonoBehaviour
 
     private Dictionary<string, NodeData> intersectionMap = new Dictionary<string, NodeData>();
 
+    // NEW: Memory lists to build our Graph
+    private List<RoadData> allRoads = new List<RoadData>();
+    private List<TransitNode> allSpawnedNodes = new List<TransitNode>();
+
     private class NodeData
     {
         public Vector3 worldPosition;
-        // Using a HashSet means if we add "Weizmann St" twice, it still only counts as 1 road.
         public HashSet<string> connectedRoads = new HashSet<string>();
+        public NodeData(Vector3 pos) { worldPosition = pos; }
+    }
 
-        public NodeData(Vector3 pos)
-        {
-            worldPosition = pos;
-        }
+    // NEW: Remembers the physical path of every road
+    private class RoadData
+    {
+        public string name;
+        public List<Vector3> waypoints = new List<Vector3>();
     }
 
     void Start()
@@ -40,6 +46,9 @@ public class MapGenerator : MonoBehaviour
         {
             GenerateRoads();
             SpawnIntersections();
+
+            // NEW: Run the graph linking algorithm
+            BuildNetworkGraph();
         }
     }
 
@@ -56,32 +65,43 @@ public class MapGenerator : MonoBehaviour
 
             if (geometry["type"].ToString() == "LineString")
             {
-                // --- THE FIX IS HERE ---
-                // Try to get the real street name. If it doesn't have one, fall back to its OSM ID.
                 string roadName = $"Road_{roadCount}";
                 JToken props = feature["properties"];
 
-                if (props != null && props["name"] != null)
+                if (props != null)
                 {
-                    roadName = props["name"].ToString();
+                    // 1. Try to get the explicit English name first
+                    if (props["name:en"] != null)
+                    {
+                        roadName = props["name:en"].ToString();
+                    }
+                    // 2. Fall back to the default local name (Hebrew) if no English exists
+                    else if (props["name"] != null)
+                    {
+                        roadName = props["name"].ToString();
+                    }
                 }
-                else if (feature["id"] != null)
+
+                // 3. Fall back to the OSM ID if it's completely unnamed
+                if (roadName == $"Road_{roadCount}" && feature["id"] != null)
                 {
-                    // Use the OSM ID for unnamed roads so we can still track them uniquely
                     roadName = $"Unnamed_{feature["id"].ToString()}";
                 }
-                // -----------------------
+
+                // Track the new road
+                RoadData newRoad = new RoadData { name = roadName };
+                allRoads.Add(newRoad);
 
                 JArray coordinates = (JArray)geometry["coordinates"];
-                DrawRoadAndTrackNodes(coordinates, roadName);
+                DrawRoadAndTrackNodes(coordinates, newRoad);
                 roadCount++;
             }
         }
     }
 
-    void DrawRoadAndTrackNodes(JArray coordinates, string roadName)
+    void DrawRoadAndTrackNodes(JArray coordinates, RoadData currentRoad)
     {
-        GameObject roadObj = new GameObject(roadName);
+        GameObject roadObj = new GameObject(currentRoad.name);
         roadObj.transform.SetParent(this.transform);
 
         LineRenderer lr = roadObj.AddComponent<LineRenderer>();
@@ -111,6 +131,9 @@ public class MapGenerator : MonoBehaviour
             Vector3 worldPos = new Vector3(x, y, 0f);
             lr.SetPosition(i, worldPos);
 
+            // Save the exact waypoint to the road memory
+            currentRoad.waypoints.Add(worldPos);
+
             string pointKey = $"{Math.Round(lon, 5)}_{Math.Round(lat, 5)}";
 
             if (!intersectionMap.ContainsKey(pointKey))
@@ -118,9 +141,7 @@ public class MapGenerator : MonoBehaviour
                 intersectionMap[pointKey] = new NodeData(worldPos);
             }
 
-            // Because we now pass the REAL name (e.g., "Weizmann Street"), the HashSet
-            // will ignore it if "Weizmann Street" is already registered to this coordinate!
-            intersectionMap[pointKey].connectedRoads.Add(roadName);
+            intersectionMap[pointKey].connectedRoads.Add(currentRoad.name);
         }
     }
 
@@ -140,7 +161,6 @@ public class MapGenerator : MonoBehaviour
             if (data.connectedRoads.Count > 1)
             {
                 bool isTooClose = false;
-
                 foreach (Vector3 existingNode in clusteredNodes)
                 {
                     if (Vector3.Distance(data.worldPosition, existingNode) < nodeMergeRadius)
@@ -151,9 +171,7 @@ public class MapGenerator : MonoBehaviour
                 }
 
                 if (!isTooClose)
-                {
                     clusteredNodes.Add(data.worldPosition);
-                }
             }
         }
 
@@ -163,9 +181,57 @@ public class MapGenerator : MonoBehaviour
             GameObject newNode = Instantiate(intersectionNodePrefab, pos, Quaternion.identity);
             newNode.transform.SetParent(nodeContainer.transform);
             newNode.name = $"Node_{nodeCount}";
+
+            // Save the spawned node so the graph can find it later
+            TransitNode tNode = newNode.GetComponent<TransitNode>();
+            if (tNode != null) allSpawnedNodes.Add(tNode);
+
             nodeCount++;
         }
+    }
 
-        Debug.Log($"Successfully mapped {nodeCount} consolidated intersections.");
+    // --- THE GRAPH ALGORITHM ---
+    void BuildNetworkGraph()
+    {
+        foreach (RoadData road in allRoads)
+        {
+            List<TransitNode> nodesOnThisRoad = new List<TransitNode>();
+
+            // Walk down the exact path of the road
+            foreach (Vector3 waypoint in road.waypoints)
+            {
+                // Check if this waypoint is sitting on top of a transit node
+                foreach (TransitNode node in allSpawnedNodes)
+                {
+                    if (Vector3.Distance(waypoint, node.transform.position) <= nodeMergeRadius)
+                    {
+                        // Add it, but prevent adding the exact same node back-to-back
+                        if (nodesOnThisRoad.Count == 0 || nodesOnThisRoad[nodesOnThisRoad.Count - 1] != node)
+                        {
+                            nodesOnThisRoad.Add(node);
+                        }
+                    }
+                }
+            }
+
+            // Now we have an ordered list of every node on this specific street. Link them!
+            for (int i = 0; i < nodesOnThisRoad.Count; i++)
+            {
+                TransitNode current = nodesOnThisRoad[i];
+
+                if (i > 0)
+                {
+                    TransitNode prev = nodesOnThisRoad[i - 1];
+                    if (!current.neighbors.Contains(prev)) current.neighbors.Add(prev);
+                }
+
+                if (i < nodesOnThisRoad.Count - 1)
+                {
+                    TransitNode next = nodesOnThisRoad[i + 1];
+                    if (!current.neighbors.Contains(next)) current.neighbors.Add(next);
+                }
+            }
+        }
+        Debug.Log("Transit Network Graph successfully linked!");
     }
 }

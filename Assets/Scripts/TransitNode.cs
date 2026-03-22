@@ -1,15 +1,16 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 public class TransitNode : MonoBehaviour
 {
     private SpriteRenderer _spriteRenderer;
     private Color _originalColor;
 
-    [Tooltip("The color the node turns when clicked")]
     public Color selectedColor = Color.yellow;
-
-    // A simple flag to track if this specific node is currently active
     public bool isSelected { get; private set; } = false;
+
+    // NEW: The Adjacency List (Who is connected to this node by a direct road?)
+    public List<TransitNode> neighbors = new List<TransitNode>();
 
     private void Awake()
     {
@@ -20,13 +21,20 @@ public class TransitNode : MonoBehaviour
     public void ToggleSelection()
     {
         isSelected = !isSelected;
-
-        // Swap the color
         _spriteRenderer.color = isSelected ? selectedColor : _originalColor;
+    }
 
-        if (isSelected)
+    // NEW: This draws red debug lines in the Unity Editor to prove the graph is connected
+    private void OnDrawGizmosSelected()
+    {
+        Gizmos.color = Color.red;
+        foreach (TransitNode neighbor in neighbors)
         {
-            Debug.Log($"Selected {gameObject.name} at {transform.position}");
+            if (neighbor != null)
+            {
+                // Draw a line from this node to its neighbor
+                Gizmos.DrawLine(transform.position, neighbor.transform.position);
+            }
         }
     }
 }
