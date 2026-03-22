@@ -269,11 +269,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5f42270da9d9a2e42bc467ff38e8a3e8, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CameraController
-  pcPanSpeed: 500
-  pcZoomSpeed: 100
+  pcPanSpeed: 1000
+  pcZoomSpeed: 10000
   touchPanSpeed: 0.5
   touchZoomSpeed: 0.5
-  minZoom: 200
+  minZoom: 50
   maxZoom: 3000
 --- !u!1 &619394800
 GameObject:
@@ -390,7 +390,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MapGenerator
   geoJsonFile: {fileID: 4900000, guid: 40fc04753f9075b48b1561c4c5e3caa7, type: 3}
   lineMaterial: {fileID: 10754, guid: 0000000000000000f000000000000000, type: 0}
-  roadWidth: 0.5
+  roadWidth: 8
+  intersectionNodePrefab: {fileID: 7526820312724446202, guid: 4f3e2b4e13d3c5244862540b85274084, type: 3}
 --- !u!4 &1161428263
 Transform:
   m_ObjectHideFlags: 0
