@@ -1,0 +1,2 @@
+Assets/Data/*.json filter=lfs diff=lfs merge=lfs -text
+Assets/Data/**/*.json filter=lfs diff=lfs merge=lfs -text
