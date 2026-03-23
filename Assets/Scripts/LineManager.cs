@@ -52,23 +52,52 @@ public class LineManager : MonoBehaviour
     // --- NEW: Draw along multiple waypoints instead of just two ---
     private void DrawRouteLine(List<TransitNode> path)
     {
+        // This will hold the massive list of every single curve coordinate for the whole trip
+        List<Vector3> finalWaypoints = new List<Vector3>();
+
+        // Loop through the A* path
+        for (int i = 0; i < path.Count - 1; i++)
+        {
+            TransitNode current = path[i];
+            TransitNode next = path[i + 1];
+
+            // If we have the exact road curve saved, use it!
+            if (current.pathGeometry.ContainsKey(next))
+            {
+                List<Vector3> curve = current.pathGeometry[next];
+
+                // Add all points EXCEPT the very last one (to prevent drawing the intersection twice)
+                for (int j = 0; j < curve.Count - 1; j++)
+                {
+                    finalWaypoints.Add(curve[j]);
+                }
+            }
+            else
+            {
+                // Fallback: Just draw a straight line if something went wrong
+                finalWaypoints.Add(current.transform.position);
+            }
+        }
+
+        // Cap off the line with the exact position of the final destination node
+        finalWaypoints.Add(path[path.Count - 1].transform.position);
+
+        // --- Standard Line Rendering ---
         GameObject routeObj = new GameObject("TransitRoute");
         routeObj.transform.SetParent(this.transform);
 
         LineRenderer lr = routeObj.AddComponent<LineRenderer>();
+        lr.positionCount = finalWaypoints.Count;
 
-        // Give the LineRenderer exactly as many points as our path has
-        lr.positionCount = path.Count;
-
-        for (int i = 0; i < path.Count; i++)
+        for (int i = 0; i < finalWaypoints.Count; i++)
         {
-            lr.SetPosition(i, path[i].transform.position);
+            lr.SetPosition(i, finalWaypoints[i]);
         }
 
         lr.startWidth = routeWidth;
         lr.endWidth = routeWidth;
         lr.numCapVertices = 4;
-        lr.numCornerVertices = 4; // Rounds out the sharp turns on the street corners
+        lr.numCornerVertices = 4;
 
         if (routeMaterial != null) lr.material = routeMaterial;
 

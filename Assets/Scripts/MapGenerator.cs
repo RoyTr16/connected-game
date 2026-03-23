@@ -22,22 +22,31 @@ public class MapGenerator : MonoBehaviour
 
     private Dictionary<string, NodeData> intersectionMap = new Dictionary<string, NodeData>();
 
-    // NEW: Memory lists to build our Graph
     private List<RoadData> allRoads = new List<RoadData>();
     private List<TransitNode> allSpawnedNodes = new List<TransitNode>();
 
     private class NodeData
     {
         public Vector3 worldPosition;
-        public HashSet<string> connectedRoads = new HashSet<string>();
+        // Tracks unique physical OSM segments
+        public HashSet<RoadData> connectedSegments = new HashSet<RoadData>();
+        // Tracks unique Street Names (to find major intersections)
+        public HashSet<string> uniqueRoadNames = new HashSet<string>();
+        public TransitNode spawnedNode;
+
         public NodeData(Vector3 pos) { worldPosition = pos; }
     }
 
-    // NEW: Remembers the physical path of every road
+    private class Waypoint
+    {
+        public Vector3 position;
+        public string key;
+    }
+
     private class RoadData
     {
         public string name;
-        public List<Vector3> waypoints = new List<Vector3>();
+        public List<Waypoint> waypoints = new List<Waypoint>();
     }
 
     void Start()
@@ -46,8 +55,6 @@ public class MapGenerator : MonoBehaviour
         {
             GenerateRoads();
             SpawnIntersections();
-
-            // NEW: Run the graph linking algorithm
             BuildNetworkGraph();
         }
     }
@@ -70,25 +77,15 @@ public class MapGenerator : MonoBehaviour
 
                 if (props != null)
                 {
-                    // 1. Try to get the explicit English name first
-                    if (props["name:en"] != null)
-                    {
-                        roadName = props["name:en"].ToString();
-                    }
-                    // 2. Fall back to the default local name (Hebrew) if no English exists
-                    else if (props["name"] != null)
-                    {
-                        roadName = props["name"].ToString();
-                    }
+                    if (props["name:en"] != null) roadName = props["name:en"].ToString();
+                    else if (props["name"] != null) roadName = props["name"].ToString();
                 }
 
-                // 3. Fall back to the OSM ID if it's completely unnamed
                 if (roadName == $"Road_{roadCount}" && feature["id"] != null)
                 {
                     roadName = $"Unnamed_{feature["id"].ToString()}";
                 }
 
-                // Track the new road
                 RoadData newRoad = new RoadData { name = roadName };
                 allRoads.Add(newRoad);
 
@@ -131,17 +128,19 @@ public class MapGenerator : MonoBehaviour
             Vector3 worldPos = new Vector3(x, y, 0f);
             lr.SetPosition(i, worldPos);
 
-            // Save the exact waypoint to the road memory
-            currentRoad.waypoints.Add(worldPos);
-
             string pointKey = $"{Math.Round(lon, 5)}_{Math.Round(lat, 5)}";
+
+            currentRoad.waypoints.Add(new Waypoint { position = worldPos, key = pointKey });
 
             if (!intersectionMap.ContainsKey(pointKey))
             {
                 intersectionMap[pointKey] = new NodeData(worldPos);
             }
 
-            intersectionMap[pointKey].connectedRoads.Add(currentRoad.name);
+            // --- THE FIX IS HERE ---
+            // Log both the exact physical segment AND the street name
+            intersectionMap[pointKey].connectedSegments.Add(currentRoad);
+            intersectionMap[pointKey].uniqueRoadNames.Add(currentRoad.name);
         }
     }
 
@@ -152,86 +151,107 @@ public class MapGenerator : MonoBehaviour
         GameObject nodeContainer = new GameObject("Transit_Nodes");
         nodeContainer.transform.SetParent(this.transform);
 
-        List<Vector3> clusteredNodes = new List<Vector3>();
+        Dictionary<Vector3, TransitNode> spawnedClusters = new Dictionary<Vector3, TransitNode>();
+        int nodeCount = 0;
 
         foreach (var kvp in intersectionMap)
         {
             NodeData data = kvp.Value;
 
-            if (data.connectedRoads.Count > 1)
+            // Major = Two differently named streets cross
+            bool isMajorIntersection = data.uniqueRoadNames.Count > 1;
+            // Minor = A single street was split into two segments by OSM
+            bool isSegmentJoin = data.connectedSegments.Count > 1;
+
+            if (isMajorIntersection || isSegmentJoin)
             {
-                bool isTooClose = false;
-                foreach (Vector3 existingNode in clusteredNodes)
+                TransitNode matchedNode = null;
+
+                foreach (var cluster in spawnedClusters)
                 {
-                    if (Vector3.Distance(data.worldPosition, existingNode) < nodeMergeRadius)
+                    if (Vector3.Distance(data.worldPosition, cluster.Key) < nodeMergeRadius)
                     {
-                        isTooClose = true;
+                        matchedNode = cluster.Value;
+
+                        // Upgrade logic: If we previously clustered a hidden minor node here,
+                        // but this new coordinate is a Major crossing, turn the visuals back on!
+                        if (isMajorIntersection && !matchedNode.GetComponent<SpriteRenderer>().enabled)
+                        {
+                            matchedNode.GetComponent<SpriteRenderer>().enabled = true;
+                            matchedNode.GetComponent<Collider2D>().enabled = true;
+                        }
                         break;
                     }
                 }
 
-                if (!isTooClose)
-                    clusteredNodes.Add(data.worldPosition);
+                if (matchedNode == null)
+                {
+                    GameObject newNode = Instantiate(intersectionNodePrefab, data.worldPosition, Quaternion.identity);
+                    newNode.transform.SetParent(nodeContainer.transform);
+
+                    // Rename it so you can see it in the hierarchy
+                    newNode.name = isMajorIntersection ? $"Node_Major_{nodeCount}" : $"Node_HiddenRoute_{nodeCount}";
+                    nodeCount++;
+
+                    matchedNode = newNode.GetComponent<TransitNode>();
+
+                    // --- THE FIX IS HERE ---
+                    // If it is just stitching two pieces of Weizmann St together, hide it from the player!
+                    if (!isMajorIntersection)
+                    {
+                        newNode.GetComponent<SpriteRenderer>().enabled = false;
+                        newNode.GetComponent<Collider2D>().enabled = false;
+                    }
+
+                    spawnedClusters[data.worldPosition] = matchedNode;
+                    allSpawnedNodes.Add(matchedNode);
+                }
+
+                data.spawnedNode = matchedNode;
             }
-        }
-
-        int nodeCount = 0;
-        foreach (Vector3 pos in clusteredNodes)
-        {
-            GameObject newNode = Instantiate(intersectionNodePrefab, pos, Quaternion.identity);
-            newNode.transform.SetParent(nodeContainer.transform);
-            newNode.name = $"Node_{nodeCount}";
-
-            // Save the spawned node so the graph can find it later
-            TransitNode tNode = newNode.GetComponent<TransitNode>();
-            if (tNode != null) allSpawnedNodes.Add(tNode);
-
-            nodeCount++;
         }
     }
 
-    // --- THE GRAPH ALGORITHM ---
     void BuildNetworkGraph()
     {
         foreach (RoadData road in allRoads)
         {
-            List<TransitNode> nodesOnThisRoad = new List<TransitNode>();
+            TransitNode lastNode = null;
+            List<Vector3> currentSegment = new List<Vector3>();
 
-            // Walk down the exact path of the road
-            foreach (Vector3 waypoint in road.waypoints)
+            foreach (Waypoint wp in road.waypoints)
             {
-                // Check if this waypoint is sitting on top of a transit node
-                foreach (TransitNode node in allSpawnedNodes)
+                currentSegment.Add(wp.position);
+
+                TransitNode hitNode = null;
+                if (intersectionMap.ContainsKey(wp.key))
                 {
-                    if (Vector3.Distance(waypoint, node.transform.position) <= nodeMergeRadius)
+                    hitNode = intersectionMap[wp.key].spawnedNode;
+                }
+
+                if (hitNode != null)
+                {
+                    if (lastNode != null && lastNode != hitNode)
                     {
-                        // Add it, but prevent adding the exact same node back-to-back
-                        if (nodesOnThisRoad.Count == 0 || nodesOnThisRoad[nodesOnThisRoad.Count - 1] != node)
-                        {
-                            nodesOnThisRoad.Add(node);
-                        }
+                        if (!lastNode.neighbors.Contains(hitNode)) lastNode.neighbors.Add(hitNode);
+                        if (!hitNode.neighbors.Contains(lastNode)) hitNode.neighbors.Add(lastNode);
+
+                        List<Vector3> finalCurve = new List<Vector3>(currentSegment);
+                        finalCurve[0] = lastNode.transform.position;
+                        finalCurve[finalCurve.Count - 1] = hitNode.transform.position;
+
+                        lastNode.pathGeometry[hitNode] = finalCurve;
+
+                        List<Vector3> reverseCurve = new List<Vector3>(finalCurve);
+                        reverseCurve.Reverse();
+                        hitNode.pathGeometry[lastNode] = reverseCurve;
                     }
-                }
-            }
 
-            // Now we have an ordered list of every node on this specific street. Link them!
-            for (int i = 0; i < nodesOnThisRoad.Count; i++)
-            {
-                TransitNode current = nodesOnThisRoad[i];
-
-                if (i > 0)
-                {
-                    TransitNode prev = nodesOnThisRoad[i - 1];
-                    if (!current.neighbors.Contains(prev)) current.neighbors.Add(prev);
-                }
-
-                if (i < nodesOnThisRoad.Count - 1)
-                {
-                    TransitNode next = nodesOnThisRoad[i + 1];
-                    if (!current.neighbors.Contains(next)) current.neighbors.Add(next);
+                    lastNode = hitNode;
+                    currentSegment.Clear();
+                    currentSegment.Add(hitNode.transform.position);
                 }
             }
         }
-        Debug.Log("Transit Network Graph successfully linked!");
     }
 }

@@ -9,8 +9,10 @@ public class TransitNode : MonoBehaviour
     public Color selectedColor = Color.yellow;
     public bool isSelected { get; private set; } = false;
 
-    // NEW: The Adjacency List (Who is connected to this node by a direct road?)
     public List<TransitNode> neighbors = new List<TransitNode>();
+
+    // NEW: This dictionary remembers the physical curved path to each neighbor
+    public Dictionary<TransitNode, List<Vector3>> pathGeometry = new Dictionary<TransitNode, List<Vector3>>();
 
     private void Awake()
     {
@@ -24,7 +26,6 @@ public class TransitNode : MonoBehaviour
         _spriteRenderer.color = isSelected ? selectedColor : _originalColor;
     }
 
-    // NEW: This draws red debug lines in the Unity Editor to prove the graph is connected
     private void OnDrawGizmosSelected()
     {
         Gizmos.color = Color.red;
@@ -32,7 +33,6 @@ public class TransitNode : MonoBehaviour
         {
             if (neighbor != null)
             {
-                // Draw a line from this node to its neighbor
                 Gizmos.DrawLine(transform.position, neighbor.transform.position);
             }
         }
