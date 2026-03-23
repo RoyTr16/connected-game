@@ -5,45 +5,60 @@ public class InputManager : MonoBehaviour
 {
     private PlayerControls _controls;
     private Camera _mainCamera;
+    private bool _isDragging = false;
 
     private void Awake()
     {
         _controls = new PlayerControls();
         _mainCamera = Camera.main;
 
-        // When the player clicks/taps, run the OnInteract function
-        _controls.Gameplay.Interact.performed += OnInteract;
+        _controls.Gameplay.Interact.started += ctx => OnInteractStarted();
+        _controls.Gameplay.Interact.canceled += ctx => OnInteractEnded();
     }
 
     private void OnEnable() => _controls.Gameplay.Enable();
     private void OnDisable() => _controls.Gameplay.Disable();
 
-    private void OnInteract(InputAction.CallbackContext context)
+    private void OnInteractStarted()
     {
-        // 1. Get the screen pixel coordinate
-        Vector2 screenPosition = _controls.Gameplay.PointerPosition.ReadValue<Vector2>();
+        Vector3 worldPos = GetMouseWorldPosition();
 
-        // 2. Convert to world coordinates
-        Vector3 worldPosition = _mainCamera.ScreenToWorldPoint(screenPosition);
+        // Use a generous 10-meter search radius, and check EVERYTHING inside it
+        Collider2D[] hits = Physics2D.OverlapCircleAll(worldPos, 10f);
 
-        // We cast it to a Vector2 because 2D Physics doesn't care about Z-axis depth
-        Vector2 worldPosition2D = new Vector2(worldPosition.x, worldPosition.y);
-
-        // 3. Fire a 2D Raycast exactly at that point
-        // Vector2.zero means the ray doesn't travel; it just checks that exact pin-drop location.
-        RaycastHit2D hit = Physics2D.Raycast(worldPosition2D, Vector2.zero);
-
-        // 4. Did we hit anything with a collider?
-        if (hit.collider != null)
+        foreach (Collider2D hit in hits)
         {
-            TransitNode node = hit.collider.GetComponent<TransitNode>();
-
+            Vertex node = hit.GetComponent<Vertex>();
             if (node != null)
             {
-                // INSTEAD of calling node.ToggleSelection() directly,
-                // we hand the node over to the LineManager.
-                LineManager.Instance.OnNodeClicked(node);
+                // We found a node! Start the route and stop looking.
+                _isDragging = true;
+                LineManager.Instance.StartRoute(node);
+                return;
             }
         }
+    }
+
+    private void OnInteractEnded()
+    {
+        _isDragging = false;
+        LineManager.Instance.FinishRoute();
+    }
+
+    private void Update()
+    {
+        if (_isDragging)
+        {
+            // Just continuously feed the mouse position to the LineManager
+            LineManager.Instance.UpdatePreviewLine(GetMouseWorldPosition());
+        }
+    }
+
+    private Vector3 GetMouseWorldPosition()
+    {
+        Vector2 screenPosition = _controls.Gameplay.PointerPosition.ReadValue<Vector2>();
+        Vector3 worldPosition = _mainCamera.ScreenToWorldPoint(screenPosition);
+        worldPosition.z = 0f; // Force the coordinate flat
+        return worldPosition;
     }
 }

@@ -51,6 +51,7 @@ public class Edge : MonoBehaviour
     {
         if (_lineRenderer == null || waypoints.Count == 0) return;
 
+        _lineRenderer.sortingOrder = 0; // NEW: Forces roads to stay on the bottom layer
         _lineRenderer.positionCount = waypoints.Count;
         _lineRenderer.SetPositions(waypoints.ToArray());
         _lineRenderer.startWidth = width;

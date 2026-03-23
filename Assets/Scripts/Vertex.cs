@@ -22,6 +22,7 @@ public class Vertex : MonoBehaviour
     private void Awake()
     {
         _spriteRenderer = GetComponent<SpriteRenderer>();
+        _spriteRenderer.sortingOrder = 2; // NEW: Forces vertices to render ABOVE the roads
         UpdateVisuals();
     }
 
