@@ -13,19 +13,19 @@ public class LineManager : MonoBehaviour
     public Color confirmedColor = Color.blue;
 
     [Header("Tracing Sensitivity")]
-    [Tooltip("How close to an intersection you need to be to lock it in")]
     public float nodeSnapDistance = 15f;
-    [Tooltip("How far the mouse can drift off the road while tracing")]
-    public float edgeSnapDistance = 50f; // Increased for a stronger magnetic feel!
+    public float edgeSnapDistance = 50f;
 
-    private bool _isRouting = false;
     private List<Vertex> _activeVertices = new List<Vertex>();
     private List<Edge> _activeEdges = new List<Edge>();
 
-    // Variables for the partial tracing UX
+    private Vertex _lastAStarTarget = null;
+    private List<Vertex> _previewVertices = new List<Vertex>();
+    private List<Edge> _previewEdges = new List<Edge>();
+
     private Edge _hoveredEdge;
     private Vector3 _hoveredPoint;
-    private int _hoveredSegmentIndex; // NEW: Tells us EXACTLY which piece of the curve we are on
+    private int _hoveredSegmentIndex;
 
     private LineRenderer _previewLine;
 
@@ -47,87 +47,123 @@ public class LineManager : MonoBehaviour
 
     public void StartRoute(Vertex startNode)
     {
-        _isRouting = true;
         _activeVertices.Clear();
         _activeEdges.Clear();
-        _hoveredEdge = null;
+        ClearPreviewData();
 
         _activeVertices.Add(startNode);
         startNode.ToggleSelection();
     }
 
-    public void FinishRoute()
+    // ==========================================
+    // EXPLICIT UNDO LOGIC
+    // ==========================================
+
+    public void ClearPreview()
     {
-        if (!_isRouting) return;
-        _isRouting = false;
-
-        if (_activeVertices.Count > 0) _activeVertices[0].ToggleSelection();
-
-        // --- NEW: THE SURGERY ---
-        if (_hoveredEdge != null)
-        {
-            Vertex currentTip = _activeVertices.Last();
-
-            // 1. Tell the MapGenerator to slice the road and drop a green station
-            Vertex newStation = MapGenerator.Instance.SplitEdge(_hoveredEdge, _hoveredPoint);
-
-            // 2. The old road is dead. Find which of the two NEW roads connects back to our route.
-            Edge connectingEdge = newStation.connectedEdges.Find(e => e.GetOppositeVertex(newStation) == currentTip);
-
-            if (connectingEdge != null)
-            {
-                _activeEdges.Add(connectingEdge);
-                _activeVertices.Add(newStation);
-            }
-        }
-
-        if (_activeEdges.Count > 0) SpawnPermanentRoute();
-
-        _activeVertices.Clear();
-        _activeEdges.Clear();
-        _hoveredEdge = null;
+        ClearPreviewData();
         _previewLine.positionCount = 0;
     }
 
-    public void UpdatePreviewLine(Vector3 liveMousePosition)
+    public bool UndoLastWaypoint()
     {
-        if (!_isRouting) return;
+        // If we only have the starting anchor left, undoing cancels the whole route
+        if (_activeVertices.Count <= 1)
+        {
+            if (_activeVertices.Count > 0 && _activeVertices[0].isSelected)
+            {
+                _activeVertices[0].ToggleSelection();
+            }
+            _activeVertices.Clear();
+            _activeEdges.Clear();
+            ClearPreview();
+            return false;
+        }
 
+        // Otherwise, surgically remove the last edge and vertex from the route
+        Vertex removedVertex = _activeVertices.Last();
+        _activeVertices.RemoveAt(_activeVertices.Count - 1);
+        _activeEdges.RemoveAt(_activeEdges.Count - 1);
+
+        if (removedVertex.isSelected) removedVertex.ToggleSelection();
+
+        ClearPreview();
+        return true;
+    }
+
+    // ==========================================
+    // STATE: A-STAR GHOST LINE
+    // ==========================================
+
+    public void UpdateAStarPreview(Vector3 liveMousePosition)
+    {
+        ClearPreviewData();
         Vertex currentTip = _activeVertices.Last();
 
-        // --- 1. UNDO LOGIC ---
-        if (_activeVertices.Count > 1)
+        Vertex targetVertex = null;
+        Collider2D[] hits = Physics2D.OverlapCircleAll(liveMousePosition, 25f);
+        foreach (Collider2D hit in hits)
         {
-            Vertex previousTip = _activeVertices[_activeVertices.Count - 2];
-            if (Vector3.Distance(liveMousePosition, previousTip.transform.position) < nodeSnapDistance)
+            Vertex node = hit.GetComponent<Vertex>();
+            if (node != null && !node.isSelected)
             {
-                _activeEdges.RemoveAt(_activeEdges.Count - 1);
-                _activeVertices.RemoveAt(_activeVertices.Count - 1);
-                _hoveredEdge = null;
-                return;
+                targetVertex = node;
+                break;
             }
         }
 
-        // --- 2. PURE MATHEMATICAL PROJECTION ---
-        _hoveredEdge = null;
+        if (targetVertex != null)
+        {
+            List<Vertex> path = Pathfinder.FindPath(currentTip, targetVertex);
+            if (path != null && path.Count > 1)
+            {
+                _lastAStarTarget = targetVertex;
+                _previewVertices = path;
+                for (int i = 0; i < path.Count - 1; i++)
+                {
+                    _previewEdges.Add(GetConnectingEdge(path[i], path[i + 1]));
+                }
+            }
+        }
+        DrawPreviewLine();
+    }
+
+    public void CommitAStarWaypoint()
+    {
+        if (_previewEdges.Count > 0)
+        {
+            _activeVertices.AddRange(_previewVertices.Skip(1));
+            _activeEdges.AddRange(_previewEdges);
+
+            if (_lastAStarTarget != null && !_lastAStarTarget.isSelected)
+            {
+                _lastAStarTarget.ToggleSelection();
+            }
+            ClearPreviewData();
+        }
+    }
+
+    // ==========================================
+    // STATE: MAGNETIC TRACE & EDGE SPLITTING
+    // ==========================================
+
+    public void UpdateDragPreview(Vector3 liveMousePosition)
+    {
+        ClearPreviewData();
+        Vertex currentTip = _activeVertices.Last();
         float closestDist = edgeSnapDistance;
 
         foreach (Edge edge in currentTip.connectedEdges)
         {
             if (_activeEdges.Count > 0 && edge == _activeEdges.Last()) continue;
 
-            // --- NEW: ONE-WAY TRAFFIC ENFORCEMENT ---
+            // One-Way Traffic Enforcement
             if (edge.properties.isOneWay)
             {
-                // Standard one-way: Cars can only drive from Vertex A to Vertex B
                 if (!edge.properties.isReversedOneWay && currentTip == edge.vertexB) continue;
-
-                // Reversed one-way (OSM "-1"): Cars can only drive from Vertex B to Vertex A
                 if (edge.properties.isReversedOneWay && currentTip == edge.vertexA) continue;
             }
-            // ----------------------------------------
 
-            // Use our new math function to find the magnetic center point
             float distToMouse = GetClosestPointOnEdge(edge, currentTip, liveMousePosition, out Vector3 projectedPoint, out int segmentIndex);
 
             if (distToMouse < closestDist)
@@ -139,97 +175,165 @@ public class LineManager : MonoBehaviour
             }
         }
 
-        // --- 3. LOCKING LOGIC ---
+        // --- NEW: AUTO-LOCK CONTINUOUS TRACING ---
         if (_hoveredEdge != null)
         {
             Vertex opposite = _hoveredEdge.GetOppositeVertex(currentTip);
 
-            if (Vector3.Distance(_hoveredPoint, opposite.transform.position) < nodeSnapDistance)
+            // If the magnetic projection has reached the absolute end of this road block
+            // (meaning the user's cursor is pulling past the intersection)
+            if (Vector3.Distance(_hoveredPoint, opposite.transform.position) <= 1f)
             {
                 _activeEdges.Add(_hoveredEdge);
                 _activeVertices.Add(opposite);
-                _hoveredEdge = null;
+                if (!opposite.isSelected) opposite.ToggleSelection();
+
+                _hoveredEdge = null; // Clear so we don't draw it twice
+
+                // Recursively call this method instantly!
+                // This allows the engine to chain together dozens of tiny roundabout segments
+                // in a single frame so the visual line never lags behind your fast mouse movements.
+                UpdateDragPreview(liveMousePosition);
+                return;
             }
         }
 
-        // --- 4. DRAW THE LIVE LINE ---
-        DrawPreview();
+        DrawPreviewLine();
+    }
+
+    public void CommitDragWaypoint(Vector3 releasePosition)
+    {
+        if (_hoveredEdge == null) return;
+
+        Vertex currentTip = _activeVertices.Last();
+        Vertex opposite = _hoveredEdge.GetOppositeVertex(currentTip);
+
+        if (Vector3.Distance(_hoveredPoint, opposite.transform.position) < nodeSnapDistance)
+        {
+            _activeEdges.Add(_hoveredEdge);
+            _activeVertices.Add(opposite);
+            if (!opposite.isSelected) opposite.ToggleSelection();
+        }
+        else
+        {
+            Vertex newStation = MapGenerator.Instance.SplitEdge(_hoveredEdge, _hoveredPoint);
+            Edge connectingEdge = newStation.connectedEdges.Find(e => e.GetOppositeVertex(newStation) == currentTip);
+
+            if (connectingEdge != null)
+            {
+                _activeEdges.Add(connectingEdge);
+                _activeVertices.Add(newStation);
+                newStation.ToggleSelection(); // Highlight the brand new mid-road stop!
+            }
+        }
+        ClearPreviewData();
     }
 
     // ==========================================
-    // NEW MATHEMATICAL PROJECTION LOGIC
+    // FINALIZATION & VISUALS
     // ==========================================
+
+    public void FinishRoute()
+    {
+        foreach (Vertex v in _activeVertices)
+        {
+            if (v.isSelected) v.ToggleSelection();
+        }
+
+        if (_activeEdges.Count > 0) SpawnPermanentRoute();
+
+        _activeVertices.Clear();
+        _activeEdges.Clear();
+        ClearPreviewData();
+        _previewLine.positionCount = 0;
+    }
+
+    private void DrawPreviewLine()
+    {
+        List<Vector3> pts = BuildBaseWaypoints(_activeVertices, _activeEdges);
+
+        // Append A* Ghost Line
+        if (_previewEdges.Count > 0)
+        {
+            pts.AddRange(BuildBaseWaypoints(_previewVertices, _previewEdges).Skip(1));
+        }
+        // Append Magnetic Trace
+        else if (_hoveredEdge != null)
+        {
+            List<Vector3> edgePts = new List<Vector3>(_hoveredEdge.waypoints);
+            if (_activeVertices.Last() == _hoveredEdge.vertexB) edgePts.Reverse();
+
+            for (int i = 1; i <= _hoveredSegmentIndex; i++) pts.Add(edgePts[i]);
+            pts.Add(_hoveredPoint);
+        }
+
+        _previewLine.positionCount = pts.Count;
+        _previewLine.SetPositions(pts.ToArray());
+    }
+
+    private List<Vector3> BuildBaseWaypoints(List<Vertex> vertices, List<Edge> edges)
+    {
+        List<Vector3> allPoints = new List<Vector3>();
+        if (vertices.Count == 0) return allPoints;
+
+        allPoints.Add(vertices[0].transform.position);
+
+        for (int i = 0; i < edges.Count; i++)
+        {
+            Edge edge = edges[i];
+            Vertex currentStart = vertices[i];
+
+            List<Vector3> edgePoints = new List<Vector3>(edge.waypoints);
+            if (edge.vertexB == currentStart) edgePoints.Reverse();
+
+            for (int j = 1; j < edgePoints.Count; j++) allPoints.Add(edgePoints[j]);
+        }
+        return allPoints;
+    }
+
+    // --- Helpers ---
+
+    private Edge GetConnectingEdge(Vertex a, Vertex b)
+    {
+        return a.connectedEdges.Find(e => e.GetOppositeVertex(a) == b);
+    }
+
+    private void ClearPreviewData()
+    {
+        _lastAStarTarget = null;
+        _previewVertices.Clear();
+        _previewEdges.Clear();
+        _hoveredEdge = null;
+    }
 
     private float GetClosestPointOnEdge(Edge edge, Vertex startVertex, Vector3 mousePos, out Vector3 closestPoint, out int segmentIndex)
     {
         List<Vector3> pts = new List<Vector3>(edge.waypoints);
-
-        // Ensure we are calculating in the direction the player is dragging
         if (startVertex == edge.vertexB) pts.Reverse();
 
         float minDist = float.MaxValue;
         closestPoint = Vector3.zero;
         segmentIndex = -1;
 
-        // Check every tiny straight segment that makes up the curved road
         for (int i = 0; i < pts.Count - 1; i++)
         {
             Vector3 a = pts[i];
             Vector3 b = pts[i + 1];
 
-            Vector3 projected = ProjectPointOnLineSegment(a, b, mousePos);
-            float dist = Vector3.Distance(mousePos, projected);
+            Vector3 lineDir = (b - a).normalized;
+            float lineLen = Vector3.Distance(a, b);
+            float dot = Mathf.Clamp(Vector3.Dot(mousePos - a, lineDir), 0f, lineLen);
+            Vector3 proj = a + lineDir * dot;
 
+            float dist = Vector3.Distance(mousePos, proj);
             if (dist < minDist)
             {
                 minDist = dist;
-                closestPoint = projected;
-                segmentIndex = i; // We now know EXACTLY what part of the curve the mouse is on
+                closestPoint = proj;
+                segmentIndex = i;
             }
         }
         return minDist;
-    }
-
-    // The core math: Drops a perpendicular line from your mouse to the street
-    private Vector3 ProjectPointOnLineSegment(Vector3 lineStart, Vector3 lineEnd, Vector3 point)
-    {
-        Vector3 lineDirection = lineEnd - lineStart;
-        float lineLength = lineDirection.magnitude;
-        lineDirection.Normalize();
-
-        Vector3 projectLine = point - lineStart;
-        float dotProduct = Vector3.Dot(projectLine, lineDirection);
-
-        // Clamp it so the projection doesn't fly past the ends of the road
-        dotProduct = Mathf.Clamp(dotProduct, 0f, lineLength);
-
-        return lineStart + lineDirection * dotProduct;
-    }
-
-    // ==========================================
-
-    private void DrawPreview()
-    {
-        List<Vector3> previewPoints = BuildRouteWaypoints();
-
-        if (_hoveredEdge != null && _activeVertices.Count > 0)
-        {
-            List<Vector3> pts = new List<Vector3>(_hoveredEdge.waypoints);
-            if (_activeVertices.Last() == _hoveredEdge.vertexB) pts.Reverse();
-
-            // 1. Add all the waypoints up to the segment the mouse is hovering over
-            // (Skipping the 0th point to avoid duplicate intersection coordinates)
-            for (int i = 1; i <= _hoveredSegmentIndex; i++)
-            {
-                previewPoints.Add(pts[i]);
-            }
-
-            // 2. Cap the line with the exact mathematical projection of the mouse
-            previewPoints.Add(_hoveredPoint);
-        }
-
-        _previewLine.positionCount = previewPoints.Count;
-        _previewLine.SetPositions(previewPoints.ToArray());
     }
 
     private void SpawnPermanentRoute()
@@ -247,31 +351,8 @@ public class LineManager : MonoBehaviour
         lr.endColor = confirmedColor;
         lr.sortingOrder = 1;
 
-        List<Vector3> finalPoints = BuildRouteWaypoints();
+        List<Vector3> finalPoints = BuildBaseWaypoints(_activeVertices, _activeEdges);
         lr.positionCount = finalPoints.Count;
         lr.SetPositions(finalPoints.ToArray());
-    }
-
-    private List<Vector3> BuildRouteWaypoints()
-    {
-        List<Vector3> allPoints = new List<Vector3>();
-        if (_activeVertices.Count == 0) return allPoints;
-
-        allPoints.Add(_activeVertices[0].transform.position);
-
-        for (int i = 0; i < _activeEdges.Count; i++)
-        {
-            Edge edge = _activeEdges[i];
-            Vertex currentStart = _activeVertices[i];
-
-            List<Vector3> edgePoints = new List<Vector3>(edge.waypoints);
-            if (edge.vertexB == currentStart) edgePoints.Reverse();
-
-            for (int j = 1; j < edgePoints.Count; j++)
-            {
-                allPoints.Add(edgePoints[j]);
-            }
-        }
-        return allPoints;
     }
 }
