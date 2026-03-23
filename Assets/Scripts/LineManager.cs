@@ -15,8 +15,8 @@ public class LineManager : MonoBehaviour
     [Header("Tracing Sensitivity")]
     [Tooltip("How close to an intersection you need to be to lock it in")]
     public float nodeSnapDistance = 15f;
-    [Tooltip("How far the mouse can drift off the road")]
-    public float edgeSnapDistance = 30f;
+    [Tooltip("How far the mouse can drift off the road while tracing")]
+    public float edgeSnapDistance = 50f; // Increased for a stronger magnetic feel!
 
     private bool _isRouting = false;
     private List<Vertex> _activeVertices = new List<Vertex>();
@@ -25,6 +25,7 @@ public class LineManager : MonoBehaviour
     // Variables for the partial tracing UX
     private Edge _hoveredEdge;
     private Vector3 _hoveredPoint;
+    private int _hoveredSegmentIndex; // NEW: Tells us EXACTLY which piece of the curve we are on
 
     private LineRenderer _previewLine;
 
@@ -62,8 +63,6 @@ public class LineManager : MonoBehaviour
 
         if (_activeVertices.Count > 0) _activeVertices[0].ToggleSelection();
 
-        // If the user let go, but they were halfway down a road,
-        // this is where we will eventually trigger the "Split Edge & Create Bus Stop" logic!
         if (_hoveredEdge != null)
         {
             Debug.Log($"Dropped route in the middle of {_hoveredEdge.properties.streetName}. Ready to create a station here!");
@@ -83,7 +82,7 @@ public class LineManager : MonoBehaviour
 
         Vertex currentTip = _activeVertices.Last();
 
-        // --- 1. UNDO LOGIC: Erase the previous road if we drag backwards ---
+        // --- 1. UNDO LOGIC ---
         if (_activeVertices.Count > 1)
         {
             Vertex previousTip = _activeVertices[_activeVertices.Count - 2];
@@ -92,31 +91,27 @@ public class LineManager : MonoBehaviour
                 _activeEdges.RemoveAt(_activeEdges.Count - 1);
                 _activeVertices.RemoveAt(_activeVertices.Count - 1);
                 _hoveredEdge = null;
-                return; // Stop processing for this frame to prevent jitter
+                return;
             }
         }
 
-        // --- 2. FIND THE CLOSEST ROAD ---
+        // --- 2. PURE MATHEMATICAL PROJECTION ---
         _hoveredEdge = null;
         float closestDist = edgeSnapDistance;
 
         foreach (Edge edge in currentTip.connectedEdges)
         {
-            // Don't trace backwards down the road we just locked in
             if (_activeEdges.Count > 0 && edge == _activeEdges.Last()) continue;
 
-            Collider2D col = edge.GetComponent<Collider2D>();
-            if (col == null) continue;
-
-            // Find the exact projection of our mouse onto the physical asphalt
-            Vector3 pointOnRoad = col.ClosestPoint(liveMousePosition);
-            float distToMouse = Vector3.Distance(liveMousePosition, pointOnRoad);
+            // Use our new math function to find the magnetic center point
+            float distToMouse = GetClosestPointOnEdge(edge, currentTip, liveMousePosition, out Vector3 projectedPoint, out int segmentIndex);
 
             if (distToMouse < closestDist)
             {
                 closestDist = distToMouse;
                 _hoveredEdge = edge;
-                _hoveredPoint = pointOnRoad;
+                _hoveredPoint = projectedPoint;
+                _hoveredSegmentIndex = segmentIndex;
             }
         }
 
@@ -125,12 +120,11 @@ public class LineManager : MonoBehaviour
         {
             Vertex opposite = _hoveredEdge.GetOppositeVertex(currentTip);
 
-            // Did our mouse reach the end of the block? Lock it in!
             if (Vector3.Distance(_hoveredPoint, opposite.transform.position) < nodeSnapDistance)
             {
                 _activeEdges.Add(_hoveredEdge);
                 _activeVertices.Add(opposite);
-                _hoveredEdge = null; // Clear hover state so we don't draw it twice
+                _hoveredEdge = null;
             }
         }
 
@@ -138,58 +132,80 @@ public class LineManager : MonoBehaviour
         DrawPreview();
     }
 
-    private void DrawPreview()
-    {
-        List<Vector3> previewPoints = BuildRouteWaypoints();
+    // ==========================================
+    // NEW MATHEMATICAL PROJECTION LOGIC
+    // ==========================================
 
-        // If we are currently dragging halfway down a road, append exactly that curve
-        if (_hoveredEdge != null && _activeVertices.Count > 0)
-        {
-            Vertex tip = _activeVertices.Last();
-            List<Vector3> partialCurve = GetPartialCurve(_hoveredEdge, tip, _hoveredPoint);
-
-            // Skip the first point of the curve to avoid duplicating the intersection coordinate
-            for (int i = 1; i < partialCurve.Count; i++)
-            {
-                previewPoints.Add(partialCurve[i]);
-            }
-        }
-
-        _previewLine.positionCount = previewPoints.Count;
-        _previewLine.SetPositions(previewPoints.ToArray());
-    }
-
-    // --- NEW: Traces a road's waypoints and stops exactly at the mouse cursor ---
-    private List<Vector3> GetPartialCurve(Edge edge, Vertex startVertex, Vector3 endPoint)
+    private float GetClosestPointOnEdge(Edge edge, Vertex startVertex, Vector3 mousePos, out Vector3 closestPoint, out int segmentIndex)
     {
         List<Vector3> pts = new List<Vector3>(edge.waypoints);
+
+        // Ensure we are calculating in the direction the player is dragging
         if (startVertex == edge.vertexB) pts.Reverse();
 
-        List<Vector3> partial = new List<Vector3>();
-        partial.Add(pts[0]);
+        float minDist = float.MaxValue;
+        closestPoint = Vector3.zero;
+        segmentIndex = -1;
 
+        // Check every tiny straight segment that makes up the curved road
         for (int i = 0; i < pts.Count - 1; i++)
         {
             Vector3 a = pts[i];
             Vector3 b = pts[i + 1];
 
-            // Math trick: If point C is on line segment AB, then Distance(A,C) + Distance(C,B) == Distance(A,B).
-            float d1 = Vector3.Distance(a, endPoint);
-            float d2 = Vector3.Distance(endPoint, b);
-            float dAB = Vector3.Distance(a, b);
+            Vector3 projected = ProjectPointOnLineSegment(a, b, mousePos);
+            float dist = Vector3.Distance(mousePos, projected);
 
-            // Using a 0.1f tolerance for floating point math errors
-            if (Mathf.Abs((d1 + d2) - dAB) < 0.1f)
+            if (dist < minDist)
             {
-                partial.Add(endPoint);
-                break; // We found the exact segment the mouse is on, stop tracing!
-            }
-            else
-            {
-                partial.Add(b); // Not there yet, add the corner and keep tracing
+                minDist = dist;
+                closestPoint = projected;
+                segmentIndex = i; // We now know EXACTLY what part of the curve the mouse is on
             }
         }
-        return partial;
+        return minDist;
+    }
+
+    // The core math: Drops a perpendicular line from your mouse to the street
+    private Vector3 ProjectPointOnLineSegment(Vector3 lineStart, Vector3 lineEnd, Vector3 point)
+    {
+        Vector3 lineDirection = lineEnd - lineStart;
+        float lineLength = lineDirection.magnitude;
+        lineDirection.Normalize();
+
+        Vector3 projectLine = point - lineStart;
+        float dotProduct = Vector3.Dot(projectLine, lineDirection);
+
+        // Clamp it so the projection doesn't fly past the ends of the road
+        dotProduct = Mathf.Clamp(dotProduct, 0f, lineLength);
+
+        return lineStart + lineDirection * dotProduct;
+    }
+
+    // ==========================================
+
+    private void DrawPreview()
+    {
+        List<Vector3> previewPoints = BuildRouteWaypoints();
+
+        if (_hoveredEdge != null && _activeVertices.Count > 0)
+        {
+            List<Vector3> pts = new List<Vector3>(_hoveredEdge.waypoints);
+            if (_activeVertices.Last() == _hoveredEdge.vertexB) pts.Reverse();
+
+            // 1. Add all the waypoints up to the segment the mouse is hovering over
+            // (Skipping the 0th point to avoid duplicate intersection coordinates)
+            for (int i = 1; i <= _hoveredSegmentIndex; i++)
+            {
+                previewPoints.Add(pts[i]);
+            }
+
+            // 2. Cap the line with the exact mathematical projection of the mouse
+            previewPoints.Add(_hoveredPoint);
+        }
+
+        _previewLine.positionCount = previewPoints.Count;
+        _previewLine.SetPositions(previewPoints.ToArray());
     }
 
     private void SpawnPermanentRoute()
