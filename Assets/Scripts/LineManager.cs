@@ -103,6 +103,17 @@ public class LineManager : MonoBehaviour
         {
             if (_activeEdges.Count > 0 && edge == _activeEdges.Last()) continue;
 
+            // --- NEW: ONE-WAY TRAFFIC ENFORCEMENT ---
+            if (edge.properties.isOneWay)
+            {
+                // Standard one-way: Cars can only drive from Vertex A to Vertex B
+                if (!edge.properties.isReversedOneWay && currentTip == edge.vertexB) continue;
+
+                // Reversed one-way (OSM "-1"): Cars can only drive from Vertex B to Vertex A
+                if (edge.properties.isReversedOneWay && currentTip == edge.vertexA) continue;
+            }
+            // ----------------------------------------
+
             // Use our new math function to find the magnetic center point
             float distToMouse = GetClosestPointOnEdge(edge, currentTip, liveMousePosition, out Vector3 projectedPoint, out int segmentIndex);
 
