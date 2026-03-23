@@ -63,9 +63,22 @@ public class LineManager : MonoBehaviour
 
         if (_activeVertices.Count > 0) _activeVertices[0].ToggleSelection();
 
+        // --- NEW: THE SURGERY ---
         if (_hoveredEdge != null)
         {
-            Debug.Log($"Dropped route in the middle of {_hoveredEdge.properties.streetName}. Ready to create a station here!");
+            Vertex currentTip = _activeVertices.Last();
+
+            // 1. Tell the MapGenerator to slice the road and drop a green station
+            Vertex newStation = MapGenerator.Instance.SplitEdge(_hoveredEdge, _hoveredPoint);
+
+            // 2. The old road is dead. Find which of the two NEW roads connects back to our route.
+            Edge connectingEdge = newStation.connectedEdges.Find(e => e.GetOppositeVertex(newStation) == currentTip);
+
+            if (connectingEdge != null)
+            {
+                _activeEdges.Add(connectingEdge);
+                _activeVertices.Add(newStation);
+            }
         }
 
         if (_activeEdges.Count > 0) SpawnPermanentRoute();

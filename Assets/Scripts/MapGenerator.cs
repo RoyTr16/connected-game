@@ -5,6 +5,14 @@ using System;
 
 public class MapGenerator : MonoBehaviour
 {
+    public static MapGenerator Instance { get; private set; }
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
     [Header("Map Data")]
     public TextAsset geoJsonFile;
 
@@ -138,7 +146,7 @@ public class MapGenerator : MonoBehaviour
 
                         if (lastVertex != null && lastVertex != currentVertex)
                         {
-                            CreateEdge(lastVertex, currentVertex, currentEdgeWaypoints, props, edgeCount);
+                            CreateEdge(lastVertex, currentVertex, currentEdgeWaypoints, props, $"_{edgeCount}");
                             edgeCount++;
                         }
 
@@ -152,20 +160,18 @@ public class MapGenerator : MonoBehaviour
 
         Debug.Log($"Spatial Graph Generated! Vertices: {activeVertices.Count} | Edges: {edgeCount}");
     }
-    private void CreateEdge(Vertex vA, Vertex vB, List<Vector3> waypoints, RoadProperties props, int index)
+    public Edge CreateEdge(Vertex vA, Vertex vB, List<Vector3> waypoints, RoadProperties props, string nameSuffix = "")
     {
-        // Dynamically build the Edge object
-        GameObject edgeObj = new GameObject($"Edge_{index}_{props.streetName}");
+        GameObject edgeObj = new GameObject($"Edge_{props.streetName}{nameSuffix}");
         edgeObj.transform.SetParent(edgeContainer);
 
         Edge newEdge = edgeObj.AddComponent<Edge>();
 
-        // Pass the material from the MapGenerator down to the LineRenderer
         LineRenderer lr = edgeObj.GetComponent<LineRenderer>();
         if (lineMaterial != null) lr.material = lineMaterial;
 
-        // Initialize the graph logic and physical colliders
         newEdge.Initialize(vA, vB, waypoints, props, roadWidth);
+        return newEdge;
     }
 
     // Rounds the coordinate to ~1 meter precision to act as a mathematical dictionary key
@@ -174,5 +180,71 @@ public class MapGenerator : MonoBehaviour
         double lon = Math.Round((double)coord[0], 5);
         double lat = Math.Round((double)coord[1], 5);
         return $"{lon}_{lat}";
+    }
+
+    // ==========================================
+    // DYNAMIC EDGE SPLITTING
+    // ==========================================
+
+    public Vertex SplitEdge(Edge originalEdge, Vector3 splitPoint)
+    {
+        List<Vector3> pts = originalEdge.waypoints;
+        int splitIndex = 0;
+        float minDist = float.MaxValue;
+
+        // Find the exact curve segment to slice on the un-reversed list
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            Vector3 proj = ProjectPointOnLineSegment(pts[i], pts[i + 1], splitPoint);
+            float d = Vector3.Distance(splitPoint, proj);
+            if (d < minDist)
+            {
+                minDist = d;
+                splitIndex = i;
+            }
+        }
+
+        // Slice into Part 1
+        List<Vector3> part1 = new List<Vector3>();
+        for (int i = 0; i <= splitIndex; i++) part1.Add(pts[i]);
+        part1.Add(splitPoint);
+
+        // Slice into Part 2
+        List<Vector3> part2 = new List<Vector3>();
+        part2.Add(splitPoint);
+        for (int i = splitIndex + 1; i < pts.Count; i++) part2.Add(pts[i]);
+
+        // 1. Spawn the brand new custom Vertex
+        GameObject vObj = Instantiate(vertexPrefab, splitPoint, Quaternion.identity, vertexContainer);
+        vObj.name = $"Vertex_CustomStop_{activeVertices.Count}";
+        Vertex newVertex = vObj.GetComponent<Vertex>();
+
+        // Make it green!
+        newVertex.SetAsTransitStop(true);
+
+        // Add it to our dictionary with a unique Guid so it's formally part of the network
+        activeVertices[System.Guid.NewGuid().ToString()] = newVertex;
+
+        // 2. Spawn the two new Edges
+        Edge edge1 = CreateEdge(originalEdge.vertexA, newVertex, part1, originalEdge.properties, "_PartA");
+        Edge edge2 = CreateEdge(newVertex, originalEdge.vertexB, part2, originalEdge.properties, "_PartB");
+
+        // 3. Destroy the original unbroken road
+        Destroy(originalEdge.gameObject);
+
+        return newVertex;
+    }
+
+    private Vector3 ProjectPointOnLineSegment(Vector3 lineStart, Vector3 lineEnd, Vector3 point)
+    {
+        Vector3 lineDirection = lineEnd - lineStart;
+        float lineLength = lineDirection.magnitude;
+        lineDirection.Normalize();
+
+        Vector3 projectLine = point - lineStart;
+        float dotProduct = Vector3.Dot(projectLine, lineDirection);
+        dotProduct = Mathf.Clamp(dotProduct, 0f, lineLength);
+
+        return lineStart + lineDirection * dotProduct;
     }
 }
