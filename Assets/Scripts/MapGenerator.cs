@@ -13,245 +13,166 @@ public class MapGenerator : MonoBehaviour
     public float roadWidth = 8f;
 
     [Header("Simulation Objects")]
-    public GameObject intersectionNodePrefab;
-    public float nodeMergeRadius = 100f;
+    public GameObject vertexPrefab;
 
     private float mapScale = 111000f;
     private Vector2 originLonLat;
     private bool isOriginSet = false;
 
-    private Dictionary<string, NodeData> intersectionMap = new Dictionary<string, NodeData>();
+    // Tracks every spawned intersection so we don't spawn duplicates
+    private Dictionary<string, Vertex> activeVertices = new Dictionary<string, Vertex>();
 
-    private List<RoadData> allRoads = new List<RoadData>();
-    private List<TransitNode> allSpawnedNodes = new List<TransitNode>();
-
-    private class NodeData
-    {
-        public Vector3 worldPosition;
-        // Tracks unique physical OSM segments
-        public HashSet<RoadData> connectedSegments = new HashSet<RoadData>();
-        // Tracks unique Street Names (to find major intersections)
-        public HashSet<string> uniqueRoadNames = new HashSet<string>();
-        public TransitNode spawnedNode;
-
-        public NodeData(Vector3 pos) { worldPosition = pos; }
-    }
-
-    private class Waypoint
-    {
-        public Vector3 position;
-        public string key;
-    }
-
-    private class RoadData
-    {
-        public string name;
-        public List<Waypoint> waypoints = new List<Waypoint>();
-    }
+    // Graph containers to keep the hierarchy clean
+    private Transform vertexContainer;
+    private Transform edgeContainer;
 
     void Start()
     {
         if (geoJsonFile != null)
         {
-            GenerateRoads();
-            SpawnIntersections();
-            BuildNetworkGraph();
+            vertexContainer = new GameObject("Graph_Vertices").transform;
+            vertexContainer.SetParent(this.transform);
+
+            edgeContainer = new GameObject("Graph_Edges").transform;
+            edgeContainer.SetParent(this.transform);
+
+            GenerateSpatialGraph();
+        }
+        else
+        {
+            Debug.LogError("No GeoJSON file assigned!");
         }
     }
 
-    void GenerateRoads()
+    void GenerateSpatialGraph()
     {
         JObject mapData = JObject.Parse(geoJsonFile.text);
         JArray features = (JArray)mapData["features"];
 
-        int roadCount = 0;
+        // --- PASS 1: THE SURVEYOR ---
+        Dictionary<string, int> coordinateOccurrences = new Dictionary<string, int>();
+        // Track the names of streets touching each coordinate to classify the vertex
+        Dictionary<string, HashSet<string>> coordinateStreetNames = new Dictionary<string, HashSet<string>>();
 
         foreach (JToken feature in features)
         {
-            JToken geometry = feature["geometry"];
-
-            if (geometry["type"].ToString() == "LineString")
+            if (feature["geometry"]["type"].ToString() == "LineString")
             {
-                string roadName = $"Road_{roadCount}";
-                JToken props = feature["properties"];
+                JArray coordinates = (JArray)feature["geometry"]["coordinates"];
 
-                if (props != null)
+                // Grab the English name first, fallback to Hebrew or Unnamed
+                string englishName = feature["properties"]["name:en"]?.ToString();
+                string localName = feature["properties"]["name"]?.ToString();
+                string roadName = !string.IsNullOrEmpty(englishName) ? englishName : (localName ?? "Unnamed Road");
+
+                for (int i = 0; i < coordinates.Count; i++)
                 {
-                    if (props["name:en"] != null) roadName = props["name:en"].ToString();
-                    else if (props["name"] != null) roadName = props["name"].ToString();
+                    string key = GetCoordinateKey(coordinates[i]);
+
+                    if (!coordinateOccurrences.ContainsKey(key))
+                    {
+                        coordinateOccurrences[key] = 0;
+                        coordinateStreetNames[key] = new HashSet<string>();
+                    }
+
+                    coordinateOccurrences[key]++;
+                    coordinateStreetNames[key].Add(roadName);
+
+                    if (i == 0 || i == coordinates.Count - 1)
+                    {
+                        coordinateOccurrences[key] += 2;
+                    }
                 }
-
-                if (roadName == $"Road_{roadCount}" && feature["id"] != null)
-                {
-                    roadName = $"Unnamed_{feature["id"].ToString()}";
-                }
-
-                RoadData newRoad = new RoadData { name = roadName };
-                allRoads.Add(newRoad);
-
-                JArray coordinates = (JArray)geometry["coordinates"];
-                DrawRoadAndTrackNodes(coordinates, newRoad);
-                roadCount++;
             }
         }
+
+        // --- PASS 2: THE BUILDER ---
+        int edgeCount = 0;
+
+        foreach (JToken feature in features)
+        {
+            if (feature["geometry"]["type"].ToString() == "LineString")
+            {
+                RoadProperties props = RoadProperties.ParseFromGeoJSON(feature["properties"]);
+                JArray coordinates = (JArray)feature["geometry"]["coordinates"];
+
+                Vertex lastVertex = null;
+                List<Vector3> currentEdgeWaypoints = new List<Vector3>();
+
+                for (int i = 0; i < coordinates.Count; i++)
+                {
+                    float lon = (float)coordinates[i][0];
+                    float lat = (float)coordinates[i][1];
+
+                    if (!isOriginSet)
+                    {
+                        originLonLat = new Vector2(lon, lat);
+                        isOriginSet = true;
+                    }
+
+                    float x = (lon - originLonLat.x) * mapScale * Mathf.Cos(originLonLat.y * Mathf.Deg2Rad);
+                    float y = (lat - originLonLat.y) * mapScale;
+                    Vector3 worldPos = new Vector3(x, y, 0f);
+
+                    currentEdgeWaypoints.Add(worldPos);
+                    string key = GetCoordinateKey(coordinates[i]);
+
+                    if (coordinateOccurrences[key] > 1)
+                    {
+                        Vertex currentVertex;
+                        if (activeVertices.ContainsKey(key))
+                        {
+                            currentVertex = activeVertices[key];
+                        }
+                        else
+                        {
+                            GameObject vObj = Instantiate(vertexPrefab, worldPos, Quaternion.identity, vertexContainer);
+
+                            // Label it in the Hierarchy so you know what the engine is doing
+                            bool isMajorIntersection = coordinateStreetNames[key].Count > 1;
+                            vObj.name = isMajorIntersection ? $"Vertex_Major_{activeVertices.Count}" : $"Vertex_Structural_{activeVertices.Count}";
+
+                            currentVertex = vObj.GetComponent<Vertex>();
+                            activeVertices[key] = currentVertex;
+                        }
+
+                        if (lastVertex != null && lastVertex != currentVertex)
+                        {
+                            CreateEdge(lastVertex, currentVertex, currentEdgeWaypoints, props, edgeCount);
+                            edgeCount++;
+                        }
+
+                        lastVertex = currentVertex;
+                        currentEdgeWaypoints.Clear();
+                        currentEdgeWaypoints.Add(worldPos);
+                    }
+                }
+            }
+        }
+
+        Debug.Log($"Spatial Graph Generated! Vertices: {activeVertices.Count} | Edges: {edgeCount}");
     }
-
-    void DrawRoadAndTrackNodes(JArray coordinates, RoadData currentRoad)
+    private void CreateEdge(Vertex vA, Vertex vB, List<Vector3> waypoints, RoadProperties props, int index)
     {
-        GameObject roadObj = new GameObject(currentRoad.name);
-        roadObj.transform.SetParent(this.transform);
+        // Dynamically build the Edge object
+        GameObject edgeObj = new GameObject($"Edge_{index}_{props.streetName}");
+        edgeObj.transform.SetParent(edgeContainer);
 
-        LineRenderer lr = roadObj.AddComponent<LineRenderer>();
-        lr.positionCount = coordinates.Count;
-        lr.startWidth = roadWidth;
-        lr.endWidth = roadWidth;
-        lr.useWorldSpace = false;
-        lr.numCapVertices = 4;
-        lr.numCornerVertices = 4;
+        Edge newEdge = edgeObj.AddComponent<Edge>();
 
+        // Pass the material from the MapGenerator down to the LineRenderer
+        LineRenderer lr = edgeObj.GetComponent<LineRenderer>();
         if (lineMaterial != null) lr.material = lineMaterial;
 
-        for (int i = 0; i < coordinates.Count; i++)
-        {
-            float lon = (float)coordinates[i][0];
-            float lat = (float)coordinates[i][1];
-
-            if (!isOriginSet)
-            {
-                originLonLat = new Vector2(lon, lat);
-                isOriginSet = true;
-            }
-
-            float x = (lon - originLonLat.x) * mapScale * Mathf.Cos(originLonLat.y * Mathf.Deg2Rad);
-            float y = (lat - originLonLat.y) * mapScale;
-
-            Vector3 worldPos = new Vector3(x, y, 0f);
-            lr.SetPosition(i, worldPos);
-
-            string pointKey = $"{Math.Round(lon, 5)}_{Math.Round(lat, 5)}";
-
-            currentRoad.waypoints.Add(new Waypoint { position = worldPos, key = pointKey });
-
-            if (!intersectionMap.ContainsKey(pointKey))
-            {
-                intersectionMap[pointKey] = new NodeData(worldPos);
-            }
-
-            // --- THE FIX IS HERE ---
-            // Log both the exact physical segment AND the street name
-            intersectionMap[pointKey].connectedSegments.Add(currentRoad);
-            intersectionMap[pointKey].uniqueRoadNames.Add(currentRoad.name);
-        }
+        // Initialize the graph logic and physical colliders
+        newEdge.Initialize(vA, vB, waypoints, props, roadWidth);
     }
 
-    void SpawnIntersections()
+    // Rounds the coordinate to ~1 meter precision to act as a mathematical dictionary key
+    private string GetCoordinateKey(JToken coord)
     {
-        if (intersectionNodePrefab == null) return;
-
-        GameObject nodeContainer = new GameObject("Transit_Nodes");
-        nodeContainer.transform.SetParent(this.transform);
-
-        Dictionary<Vector3, TransitNode> spawnedClusters = new Dictionary<Vector3, TransitNode>();
-        int nodeCount = 0;
-
-        foreach (var kvp in intersectionMap)
-        {
-            NodeData data = kvp.Value;
-
-            // Major = Two differently named streets cross
-            bool isMajorIntersection = data.uniqueRoadNames.Count > 1;
-            // Minor = A single street was split into two segments by OSM
-            bool isSegmentJoin = data.connectedSegments.Count > 1;
-
-            if (isMajorIntersection || isSegmentJoin)
-            {
-                TransitNode matchedNode = null;
-
-                foreach (var cluster in spawnedClusters)
-                {
-                    if (Vector3.Distance(data.worldPosition, cluster.Key) < nodeMergeRadius)
-                    {
-                        matchedNode = cluster.Value;
-
-                        // Upgrade logic: If we previously clustered a hidden minor node here,
-                        // but this new coordinate is a Major crossing, turn the visuals back on!
-                        if (isMajorIntersection && !matchedNode.GetComponent<SpriteRenderer>().enabled)
-                        {
-                            matchedNode.GetComponent<SpriteRenderer>().enabled = true;
-                            matchedNode.GetComponent<Collider2D>().enabled = true;
-                        }
-                        break;
-                    }
-                }
-
-                if (matchedNode == null)
-                {
-                    GameObject newNode = Instantiate(intersectionNodePrefab, data.worldPosition, Quaternion.identity);
-                    newNode.transform.SetParent(nodeContainer.transform);
-
-                    // Rename it so you can see it in the hierarchy
-                    newNode.name = isMajorIntersection ? $"Node_Major_{nodeCount}" : $"Node_HiddenRoute_{nodeCount}";
-                    nodeCount++;
-
-                    matchedNode = newNode.GetComponent<TransitNode>();
-
-                    // --- THE FIX IS HERE ---
-                    // If it is just stitching two pieces of Weizmann St together, hide it from the player!
-                    if (!isMajorIntersection)
-                    {
-                        newNode.GetComponent<SpriteRenderer>().enabled = false;
-                        newNode.GetComponent<Collider2D>().enabled = false;
-                    }
-
-                    spawnedClusters[data.worldPosition] = matchedNode;
-                    allSpawnedNodes.Add(matchedNode);
-                }
-
-                data.spawnedNode = matchedNode;
-            }
-        }
-    }
-
-    void BuildNetworkGraph()
-    {
-        foreach (RoadData road in allRoads)
-        {
-            TransitNode lastNode = null;
-            List<Vector3> currentSegment = new List<Vector3>();
-
-            foreach (Waypoint wp in road.waypoints)
-            {
-                currentSegment.Add(wp.position);
-
-                TransitNode hitNode = null;
-                if (intersectionMap.ContainsKey(wp.key))
-                {
-                    hitNode = intersectionMap[wp.key].spawnedNode;
-                }
-
-                if (hitNode != null)
-                {
-                    if (lastNode != null && lastNode != hitNode)
-                    {
-                        if (!lastNode.neighbors.Contains(hitNode)) lastNode.neighbors.Add(hitNode);
-                        if (!hitNode.neighbors.Contains(lastNode)) hitNode.neighbors.Add(lastNode);
-
-                        List<Vector3> finalCurve = new List<Vector3>(currentSegment);
-                        finalCurve[0] = lastNode.transform.position;
-                        finalCurve[finalCurve.Count - 1] = hitNode.transform.position;
-
-                        lastNode.pathGeometry[hitNode] = finalCurve;
-
-                        List<Vector3> reverseCurve = new List<Vector3>(finalCurve);
-                        reverseCurve.Reverse();
-                        hitNode.pathGeometry[lastNode] = reverseCurve;
-                    }
-
-                    lastNode = hitNode;
-                    currentSegment.Clear();
-                    currentSegment.Add(hitNode.transform.position);
-                }
-            }
-        }
+        double lon = Math.Round((double)coord[0], 5);
+        double lat = Math.Round((double)coord[1], 5);
+        return $"{lon}_{lat}";
     }
 }

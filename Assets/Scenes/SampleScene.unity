@@ -391,8 +391,7 @@ MonoBehaviour:
   geoJsonFile: {fileID: 4900000, guid: 40fc04753f9075b48b1561c4c5e3caa7, type: 3}
   lineMaterial: {fileID: 10754, guid: 0000000000000000f000000000000000, type: 0}
   roadWidth: 8
-  intersectionNodePrefab: {fileID: 7526820312724446202, guid: 4f3e2b4e13d3c5244862540b85274084, type: 3}
-  nodeMergeRadius: 100
+  vertexPrefab: {fileID: 3188420195664783481, guid: b4388dde74911dd4193d8defe0fcf254, type: 3}
 --- !u!4 &1161428263
 Transform:
   m_ObjectHideFlags: 0

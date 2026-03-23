@@ -30,9 +30,16 @@ public class RoadProperties
     {
         RoadProperties props = new RoadProperties();
 
-        // 1. Parse Names
-        props.streetName = propertiesToken["name"]?.ToString() ?? "Unnamed Road";
-        props.streetNameEnglish = propertiesToken["name:en"]?.ToString() ?? props.streetName;
+        // 1. Parse Names (Force English if available)
+        string englishName = propertiesToken["name:en"]?.ToString();
+        string localName = propertiesToken["name"]?.ToString();
+
+        if (!string.IsNullOrEmpty(englishName))
+            props.streetName = englishName;
+        else if (!string.IsNullOrEmpty(localName))
+            props.streetName = localName;
+        else
+            props.streetName = "Unnamed Road";
 
         // 2. Parse Highway Type
         string highwayTag = propertiesToken["highway"]?.ToString().ToLower() ?? "unclassified";
