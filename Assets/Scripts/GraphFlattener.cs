@@ -10,9 +10,13 @@ public class GraphFlattener
     public NativeArray<float3> intersectionWaypoints;
     public NativeArray<Connection> nativeConnections;
 
+    public Material asphaltMaterial;
+    public float laneWidth = 3.0f;
+
     public Dictionary<int, LaneAuthoring> laneIndexToObject = new Dictionary<int, LaneAuthoring>();
     private Dictionary<LaneAuthoring, int> objectToLaneIndex = new Dictionary<LaneAuthoring, int>();
     private Dictionary<LaneAuthoring, Road> laneToRoad = new Dictionary<LaneAuthoring, Road>();
+    private Transform _connectionContainer;
 
     public void FlattenGraph(List<Road> allRoads, List<OsmTurnRestriction> turnRestrictions)
     {
@@ -73,10 +77,10 @@ public class GraphFlattener
         }
 
         // =====================================================
-        // STEP 3: Discover lane-to-lane connections (count pass)
+        // STEP 3: Discover lane-to-lane connections
         // =====================================================
-        // A lane exiting at Vertex V connects to any lane that enters at V.
         List<List<LaneAuthoring>> connectionTargets = new List<List<LaneAuthoring>>();
+        bool[] hasIncomingConnection = new bool[allLanes.Count]; // Track for mesh trimming
         int totalConnections = 0;
 
         for (int i = 0; i < allLanes.Count; i++)
@@ -84,18 +88,15 @@ public class GraphFlattener
             LaneAuthoring laneA = allLanes[i];
             Road roadA = laneToRoad[laneA];
             Vertex exitVertex = GetExitVertex(laneA, roadA);
-
             List<LaneAuthoring> targets = new List<LaneAuthoring>();
 
-            // Pre-check: does an "only_" restriction apply to this road at this vertex?
             long fromWayId = roadA.osmWayId;
             long viaNodeId = exitVertex.osmNodeId;
             long onlyToWayId = -1;
 
             foreach (OsmTurnRestriction r in turnRestrictions)
             {
-                if (r.fromWayId == fromWayId && r.viaNodeId == viaNodeId
-                    && r.restrictionType.StartsWith("only_"))
+                if (r.fromWayId == fromWayId && r.viaNodeId == viaNodeId && r.restrictionType.StartsWith("only_"))
                 {
                     onlyToWayId = r.toWayId;
                     break;
@@ -106,19 +107,13 @@ public class GraphFlattener
             {
                 if (adjRoad == null) continue;
 
-                // --- FILTER 1: Implicit U-Turn Ban ---
                 if (adjRoad == roadA)
                 {
-                    // Allow U-turn only at physical dead-ends
-                    if (exitVertex.connectedRoads.Count > 1)
-                        continue;
+                    if (exitVertex.connectedRoads.Count > 1) continue;
                 }
 
-                // --- FILTER 3: "only_" restriction (checked before "no_") ---
-                if (onlyToWayId != -1 && adjRoad.osmWayId != onlyToWayId)
-                    continue;
+                if (onlyToWayId != -1 && adjRoad.osmWayId != onlyToWayId) continue;
 
-                // --- FILTER 2: "no_" restriction ---
                 bool blocked = false;
                 foreach (OsmTurnRestriction r in turnRestrictions)
                 {
@@ -137,10 +132,12 @@ public class GraphFlattener
                 {
                     if (laneB == laneA) continue;
 
-                    // LaneB must START at the same vertex that LaneA exits
                     Vertex entryVertex = GetEntryVertex(laneB, adjRoad);
                     if (entryVertex == exitVertex)
+                    {
                         targets.Add(laneB);
+                        hasIncomingConnection[objectToLaneIndex[laneB]] = true; // Mark destination for trimming
+                    }
                 }
             }
 
@@ -154,6 +151,8 @@ public class GraphFlattener
         nativeConnections = new NativeArray<Connection>(totalConnections, Allocator.Persistent);
         List<float3> intersectionCurveList = new List<float3>();
         int connOffset = 0;
+
+        _connectionContainer = new GameObject("Graph_ConnectionMeshes").transform;
 
         for (int i = 0; i < allLanes.Count; i++)
         {
@@ -179,15 +178,35 @@ public class GraphFlattener
         intersectionWaypoints = new NativeArray<float3>(intersectionCurveList.Count, Allocator.Persistent);
         for (int i = 0; i < intersectionCurveList.Count; i++)
             intersectionWaypoints[i] = intersectionCurveList[i];
-    }
 
-    // =====================================================
-    // CONNECTIVITY: Determine which Vertex a lane exits/enters
-    // =====================================================
+        // =====================================================
+        // STEP 5: Trim Lane Meshes and Generate Visuals
+        // =====================================================
+        for (int i = 0; i < allLanes.Count; i++)
+        {
+            LaneAuthoring lane = allLanes[i];
+            bool hasOutgoing = connectionTargets[i].Count > 0;
+            bool hasIncoming = hasIncomingConnection[i];
+
+            // Only trim if the road is actually long enough
+            float laneLen = CalculateLength(lane.waypoints);
+            float trimStart = (hasIncoming && laneLen > 15f) ? 5.0f : 0f;
+            float trimEnd = (hasOutgoing && laneLen > 15f) ? 5.0f : 0f;
+
+            List<Vector3> meshWaypoints = TrimWaypoints(lane.waypoints, trimStart, trimEnd);
+
+            if (meshWaypoints.Count >= 2 && asphaltMaterial != null)
+            {
+                MeshFilter mf = lane.gameObject.AddComponent<MeshFilter>();
+                MeshRenderer mr = lane.gameObject.AddComponent<MeshRenderer>();
+                mf.mesh = RoadMeshBuilder.CreateRoadMesh(meshWaypoints, laneWidth);
+                mr.sharedMaterial = asphaltMaterial;
+            }
+        }
+    }
 
     private Vertex GetExitVertex(LaneAuthoring lane, Road road)
     {
-        // The exit vertex is whichever road vertex is closest to the lane's LAST waypoint
         Vector3 lastWp = lane.waypoints[lane.waypoints.Count - 1];
         float distToA = Vector3.Distance(lastWp, road.vertexA.transform.position);
         float distToB = Vector3.Distance(lastWp, road.vertexB.transform.position);
@@ -196,67 +215,65 @@ public class GraphFlattener
 
     private Vertex GetEntryVertex(LaneAuthoring lane, Road road)
     {
-        // The entry vertex is whichever road vertex is closest to the lane's FIRST waypoint
         Vector3 firstWp = lane.waypoints[0];
         float distToA = Vector3.Distance(firstWp, road.vertexA.transform.position);
         float distToB = Vector3.Distance(firstWp, road.vertexB.transform.position);
         return distToA < distToB ? road.vertexA : road.vertexB;
     }
 
-    // =====================================================
-    // BEZIER CURVE BAKING (No more cross-products!)
-    // =====================================================
-
     private Connection BakeConnection(LaneAuthoring laneA, LaneAuthoring laneB, Vertex exitVertex, List<float3> curveList)
     {
+        // We need to look up the flat lane data to check their lengths!
+        int idxA = objectToLaneIndex[laneA];
         int idxB = objectToLaneIndex[laneB];
-        LaneStruct flatA = nativeLanes[objectToLaneIndex[laneA]];
+        LaneStruct flatA = nativeLanes[idxA];
         LaneStruct flatB = nativeLanes[idxB];
 
-        // Dynamic curve sizes (same formula: 10m max, never more than 40% of the lane)
-        float curveDistA = math.min(10f, flatA.length * 0.4f);
-        float curveDistB = math.min(10f, flatB.length * 0.4f);
-
-        // Stop point on Lane A (near its end) — waypoints are already offset!
-        float3 stopPoint = GetPointAtDistance(laneA.waypoints, flatA.length - curveDistA);
-
-        // Entry point on Lane B (near its start) — waypoints are already offset!
-        float3 entryPoint = GetPointAtDistance(laneB.waypoints, curveDistB);
-
-        // Exit direction of Lane A (last two waypoints)
+        // Exit direction of Lane A (looking at its last 2 waypoints)
         List<Vector3> wpA = laneA.waypoints;
-        float3 rawDirA = (float3)wpA[wpA.Count - 1] - (float3)wpA[wpA.Count - 2];
-        float3 dirA = math.lengthsq(rawDirA) > 0.0001f ? math.normalize(rawDirA) : new float3(1, 0, 0);
+        Vector3 rawDirA = wpA[wpA.Count - 1] - wpA[wpA.Count - 2];
+        Vector3 dirA = rawDirA.sqrMagnitude > 0.0001f ? rawDirA.normalized : Vector3.right;
 
-        // Entry direction of Lane B (first two waypoints)
+        // Entry direction of Lane B (looking at its first 2 waypoints)
         List<Vector3> wpB = laneB.waypoints;
-        float3 rawDirB = (float3)wpB[1] - (float3)wpB[0];
-        float3 dirB = math.lengthsq(rawDirB) > 0.0001f ? math.normalize(rawDirB) : new float3(1, 0, 0);
+        Vector3 rawDirB = wpB[1] - wpB[0];
+        Vector3 dirB = rawDirB.sqrMagnitude > 0.0001f ? rawDirB.normalized : Vector3.right;
 
-        // Bezier control point: the vertex sits on the centerline intersection.
-        // Since lane endpoints are already offset 1.5m into their physical lanes,
-        // using the vertex as the control point naturally arcs through the intersection.
-        float3 controlPoint = (float3)exitVertex.transform.position;
+        // Dynamically calculate the trim (matching our visual mesh logic)
+        float exitTrim = (flatA.length > 15f) ? 5.0f : 0f;
+        float entryTrim = (flatB.length > 15f) ? 5.0f : 0f;
 
-        List<float3> curvePoints = GenerateBezierCurve(stopPoint, controlPoint, entryPoint, 12);
-        int curveStart = curveList.Count;
-        foreach (var p in curvePoints) curveList.Add(p);
+        // The mathematically perfect Bezier triangle, now fully synced with the visual trim!
+        float3 p0 = (float3)(wpA[wpA.Count - 1] - dirA * exitTrim);
+        float3 p1 = (float3)exitVertex.transform.position;
+        float3 p2 = (float3)(wpB[0] + dirB * entryTrim);
 
-        // Straight-away check (dot > 0.95 ≈ < 18 degrees)
-        float dotAngle = math.dot(dirA, dirB);
-        bool isStraight = dotAngle > 0.95f;
+        List<float3> curvePoints = GenerateBezierCurve(p0, p1, p2, 15);
+
+        if (asphaltMaterial != null && _connectionContainer != null)
+        {
+            List<Vector3> meshPoints = new List<Vector3>(curvePoints.Count);
+            foreach (float3 fp in curvePoints) meshPoints.Add((Vector3)fp);
+
+            GameObject connObj = new GameObject("ConnectionMesh");
+            connObj.transform.SetParent(_connectionContainer);
+            MeshFilter mf = connObj.AddComponent<MeshFilter>();
+            MeshRenderer mr = connObj.AddComponent<MeshRenderer>();
+            mf.mesh = RoadMeshBuilder.CreateRoadMesh(meshPoints, laneWidth);
+            mr.sharedMaterial = asphaltMaterial;
+        }
 
         return new Connection
         {
             laneIndex = idxB,
-            curveWaypointStartIndex = curveStart,
-            curveWaypointCount = curvePoints.Count,
+            p0 = p0,
+            p1 = p1,
+            p2 = p2,
             curveLength = CalculateCurveLength(curvePoints),
-            dropoffDistance = curveDistB,
-            isStraight = isStraight
+            exitTrim = exitTrim,   // Saved to DOTS!
+            entryTrim = entryTrim  // Saved to DOTS!
         };
     }
-
     // =====================================================
     // MATH UTILITIES
     // =====================================================
@@ -273,21 +290,60 @@ public class GraphFlattener
         return points;
     }
 
-    private float3 GetPointAtDistance(List<Vector3> waypoints, float distance)
+    /// <summary>
+    /// Slides mathematically along the waypoints to cleanly slice off the ends
+    /// </summary>
+    private List<Vector3> TrimWaypoints(List<Vector3> waypoints, float trimStart, float trimEnd)
     {
-        if (waypoints.Count < 2) return (float3)waypoints[0];
-        float tracked = 0f;
+        float totalLength = CalculateLength(waypoints);
+        if (totalLength <= trimStart + trimEnd) return new List<Vector3>();
+
+        List<Vector3> result = new List<Vector3>();
+        float currentDist = 0f;
+
         for (int i = 0; i < waypoints.Count - 1; i++)
         {
-            float segLen = Vector3.Distance(waypoints[i], waypoints[i + 1]);
-            if (distance <= tracked + segLen)
+            Vector3 pA = waypoints[i];
+            Vector3 pB = waypoints[i+1];
+            float segLen = Vector3.Distance(pA, pB);
+
+            float segStart = currentDist;
+            float segEnd = currentDist + segLen;
+
+            // Skip segments completely outside the trim bounds
+            if (segEnd <= trimStart || segStart >= totalLength - trimEnd)
             {
-                float t = (distance - tracked) / segLen;
-                return math.lerp((float3)waypoints[i], (float3)waypoints[i + 1], t);
+                currentDist += segLen;
+                continue;
             }
-            tracked += segLen;
+
+            // Crosses the start threshold? Interpolate the clean cut
+            if (segStart < trimStart && segEnd > trimStart)
+            {
+                float t = (trimStart - segStart) / segLen;
+                result.Add(Vector3.Lerp(pA, pB, t));
+            }
+            // Add original point if it's safely inside the bounds
+            else if (segStart >= trimStart && segStart <= totalLength - trimEnd)
+            {
+                result.Add(pA);
+            }
+
+            // Crosses the end threshold? Interpolate the clean cut
+            if (segStart < totalLength - trimEnd && segEnd > totalLength - trimEnd)
+            {
+                float t = ((totalLength - trimEnd) - segStart) / segLen;
+                result.Add(Vector3.Lerp(pA, pB, t));
+            }
+
+            currentDist += segLen;
         }
-        return (float3)waypoints[waypoints.Count - 1];
+
+        // Ensure final point is added if there was no end trim
+        if (currentDist >= trimStart && currentDist <= totalLength - trimEnd)
+            result.Add(waypoints[waypoints.Count - 1]);
+
+        return result;
     }
 
     private float CalculateLength(List<Vector3> pts)

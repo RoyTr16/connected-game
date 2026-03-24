@@ -47,6 +47,14 @@ public class TrafficManager : MonoBehaviour
         List<OsmTurnRestriction> restrictions = MapGenerator.Instance != null
             ? MapGenerator.Instance.turnRestrictions
             : new List<OsmTurnRestriction>();
+
+        // Pass visual settings for connection meshes
+        if (MapGenerator.Instance != null)
+        {
+            _flattener.asphaltMaterial = MapGenerator.Instance.AsphaltMaterial;
+            _flattener.laneWidth = MapGenerator.Instance.laneWidth;
+        }
+
         _flattener.FlattenGraph(allRoads, restrictions);
 
         int totalLanes = _flattener.nativeLanes.Length;
@@ -118,7 +126,6 @@ public class TrafficManager : MonoBehaviour
             spatialData = _spatialData,
             lanes = _flattener.nativeLanes,
             laneWaypoints = _flattener.laneWaypoints,
-            intersectionWaypoints = _flattener.intersectionWaypoints,
             connections = _flattener.nativeConnections,
             laneTailCarIndices = _laneTailCarIndices,
             deltaTime = Time.deltaTime

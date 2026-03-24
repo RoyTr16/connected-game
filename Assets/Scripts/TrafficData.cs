@@ -14,25 +14,17 @@ public struct CarData
     public float3 position;
     public quaternion rotation;
 
-    public int currentLaneIndex; // RENAMED: We drive on lanes now, not edges!
-    public float distanceAlongLane; // RENAMED
+    public int currentLaneIndex;
+    public float distanceAlongLane;
+
     public float currentSpeed;
     public float maxSpeed;
     public int state;
 
-    // drivingForward is GONE! Every lane flows perfectly from start to end.
-
     public uint randomSeed;
 
     public int upcomingConnectionIndex;
-
-    // Intersection memory
-    public int currentCurveWaypointStartIndex;
-    public int curveWaypointCount;
-    public float curveDistanceAlongPath;
-    public float curveDropoffDistance;
 }
-
 // RENAMED: This replaces EdgeStruct
 public struct LaneStruct
 {
@@ -50,12 +42,15 @@ public struct LaneStruct
 
 public struct Connection
 {
-    public int laneIndex; // RENAMED: Points to the next Lane, not the Edge
-    public int curveWaypointStartIndex;
-    public int curveWaypointCount;
+    public int laneIndex;
+    public float3 p0;
+    public float3 p1;
+    public float3 p2;
     public float curveLength;
-    public float dropoffDistance;
-    public bool isStraight;
+
+    // The missing synchronization variables!
+    public float exitTrim;
+    public float entryTrim;
 }
 
 public struct CarSpatialData : IComparable<CarSpatialData>

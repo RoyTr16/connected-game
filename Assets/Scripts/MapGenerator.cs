@@ -22,9 +22,10 @@ public class MapGenerator : MonoBehaviour
 
     [Header("Visuals")]
     [SerializeField] private Material asphaltMaterial;
+    public Material AsphaltMaterial => asphaltMaterial;
 
     [Header("Debug Visualization")]
-    public bool showDebugGizmos = false; // Default to false for performance
+    public bool showDebugGizmos = false;
 
     [Header("Simulation Objects")]
     public GameObject vertexPrefab;
@@ -34,22 +35,17 @@ public class MapGenerator : MonoBehaviour
     private Vector2 originLonLat;
     private bool isOriginSet = false;
 
-    // OSM ID-keyed lookups
     private Dictionary<long, Vector3> osmNodePositions = new Dictionary<long, Vector3>();
     private Dictionary<long, Dictionary<string, string>> osmNodeTags = new Dictionary<long, Dictionary<string, string>>();
     private Dictionary<long, Vertex> osmNodeToVertex = new Dictionary<long, Vertex>();
 
-    // Traffic rule storage (parsed from relations — not applied to GameObjects yet)
     public Dictionary<long, string> nodeTrafficRules { get; private set; } = new Dictionary<long, string>();
     public List<OsmTurnRestriction> turnRestrictions { get; private set; } = new List<OsmTurnRestriction>();
 
     private const float LaneOffset = 1.5f;
 
-    // Graph containers to keep the hierarchy clean
     private Transform vertexContainer;
     private Transform roadContainer;
-
-    // Tracks vertices by coordinate key for deduplication
     private Dictionary<string, Vertex> activeVertices = new Dictionary<string, Vertex>();
 
     void Start()
@@ -85,16 +81,11 @@ public class MapGenerator : MonoBehaviour
         }
     }
 
-    // ==========================================
-    // 3-PASS RAW OSM JSON PARSER
-    // ==========================================
-
     void GenerateSpatialGraph()
     {
         JObject mapData = JObject.Parse(geoJsonFile.text);
         JArray elements = (JArray)mapData["elements"];
 
-        // Separate elements by type for ordered processing
         List<JToken> nodeElements = new List<JToken>();
         List<JToken> wayElements = new List<JToken>();
         List<JToken> relationElements = new List<JToken>();
@@ -107,9 +98,7 @@ public class MapGenerator : MonoBehaviour
             else if (type == "relation") relationElements.Add(element);
         }
 
-        // =====================================================
-        // PASS 1: NODES — Build coordinate lookup + traffic rules
-        // =====================================================
+        // PASS 1: NODES
         foreach (JToken node in nodeElements)
         {
             long id = (long)node["id"];
@@ -127,7 +116,6 @@ public class MapGenerator : MonoBehaviour
             Vector3 worldPos = new Vector3(x, y, 0f);
             osmNodePositions[id] = worldPos;
 
-            // Parse node tags for traffic signals / stop signs
             JToken tags = node["tags"];
             if (tags != null)
             {
@@ -145,10 +133,7 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
-        // =====================================================
-        // PASS 2: WAYS — Build Roads, Vertices, and Lanes
-        // =====================================================
-        // Pre-survey: count how many ways reference each node (for intersection detection)
+        // PASS 2: WAYS
         Dictionary<long, int> nodeWayCount = new Dictionary<long, int>();
         Dictionary<long, HashSet<string>> nodeStreetNames = new Dictionary<long, HashSet<string>>();
 
@@ -175,13 +160,11 @@ public class MapGenerator : MonoBehaviour
                 nodeWayCount[nodeId]++;
                 nodeStreetNames[nodeId].Add(roadName);
 
-                // Endpoints of ways are always potential vertices
                 if (i == 0 || i == nodeIds.Count - 1)
                     nodeWayCount[nodeId] += 2;
             }
         }
 
-        // Build the roads
         int roadCount = 0;
         int laneCount = 0;
 
@@ -196,7 +179,6 @@ public class MapGenerator : MonoBehaviour
             RoadProperties props = RoadProperties.ParseFromOsmTags(tags);
             JArray nodeIds = (JArray)way["nodes"];
 
-            // Read the OSM layer tag for vertical separation (bridges, tunnels)
             int layer = 0;
             string layerStr = tags["layer"]?.ToString();
             if (!string.IsNullOrEmpty(layerStr))
@@ -211,13 +193,11 @@ public class MapGenerator : MonoBehaviour
                 long nodeId = (long)nodeIds[i];
 
                 if (!osmNodePositions.TryGetValue(nodeId, out Vector3 worldPos))
-                    continue; // Skip if the node wasn't in our export
+                    continue;
 
-                // Apply vertical offset for bridges/tunnels
                 worldPos.z = zElevation;
                 currentWaypoints.Add(worldPos);
 
-                // Split at intersection nodes (referenced by multiple ways or at endpoints)
                 if (nodeWayCount.ContainsKey(nodeId) && nodeWayCount[nodeId] > 1)
                 {
                     Vertex currentVertex = GetOrCreateVertex(nodeId, worldPos, nodeStreetNames);
@@ -237,9 +217,7 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
-        // =====================================================
-        // PASS 3: RELATIONS — Extract turn restrictions
-        // =====================================================
+        // PASS 3: RELATIONS
         foreach (JToken relation in relationElements)
         {
             JToken tags = relation["tags"];
@@ -281,9 +259,7 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
-        // =====================================================
-        // POST-PARSE: Attach IntersectionAuthoring to all vertices
-        // =====================================================
+        // POST-PARSE
         foreach (var kvp in osmNodeToVertex)
         {
             long nodeId = kvp.Key;
@@ -301,7 +277,6 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
-        // Fire up the traffic engine now that the roads exist!
         if (TrafficManager.Instance != null)
         {
             TrafficManager.Instance.InitializeTraffic();
@@ -310,17 +285,11 @@ public class MapGenerator : MonoBehaviour
         Debug.Log($"OSM Graph Generated! Nodes: {osmNodePositions.Count} | Vertices: {activeVertices.Count} | Roads: {roadCount} | Lanes: {laneCount} | Traffic Rules: {nodeTrafficRules.Count} | Turn Restrictions: {turnRestrictions.Count}");
     }
 
-    // ==========================================
-    // VERTEX MANAGEMENT
-    // ==========================================
-
     private Vertex GetOrCreateVertex(long osmNodeId, Vector3 worldPos, Dictionary<long, HashSet<string>> nodeStreetNames)
     {
-        // Use the OSM node ID as the primary key
         if (osmNodeToVertex.TryGetValue(osmNodeId, out Vertex existing))
             return existing;
 
-        // Also check coordinate-based dedup for split vertices
         string coordKey = $"{worldPos.x:F2}_{worldPos.y:F2}";
         if (activeVertices.TryGetValue(coordKey, out Vertex coordMatch))
         {
@@ -347,27 +316,18 @@ public class MapGenerator : MonoBehaviour
         if (string.IsNullOrEmpty(highway)) return false;
         switch (highway)
         {
-            case "motorway":
-            case "motorway_link":
-            case "trunk":
-            case "trunk_link":
-            case "primary":
-            case "primary_link":
-            case "secondary":
-            case "secondary_link":
-            case "tertiary":
-            case "tertiary_link":
-            case "residential":
-            case "unclassified":
+            case "motorway": case "motorway_link": case "trunk": case "trunk_link":
+            case "primary": case "primary_link": case "secondary": case "secondary_link":
+            case "tertiary": case "tertiary_link": case "residential": case "unclassified":
             case "living_street":
                 return true;
             default:
                 return false;
         }
     }
+
     public Road CreateRoad(Vertex vA, Vertex vB, List<Vector3> centerline, RoadProperties props, string nameSuffix = "")
     {
-        // --- 1. Create the Road parent ---
         GameObject roadObj = new GameObject($"Road_{props.streetName}{nameSuffix}");
         roadObj.transform.SetParent(roadContainer);
 
@@ -379,67 +339,40 @@ public class MapGenerator : MonoBehaviour
         road.vertexB = vB;
         road.centerlineWaypoints = new List<Vector3>(centerline);
 
-        // Tell the vertices this road connects to them
         if (vA != null) vA.AddRoad(road);
         if (vB != null) vB.AddRoad(road);
 
-        // --- 2. Spawn LaneAuthoring children ---
         if (props.isOneWay)
         {
-            // Determine the actual flow direction based on OSM reversed tag
             List<Vector3> flowWaypoints = props.isReversedOneWay
                 ? ReverseWaypoints(centerline)
                 : new List<Vector3>(centerline);
-
             CreateLaneChild(roadObj.transform, flowWaypoints, "Lane_0");
         }
         else
         {
-            // Two-way: Lane 0 = forward flow, Lane 1 = reverse flow
             List<Vector3> forwardWaypoints = new List<Vector3>(centerline);
             List<Vector3> reverseWaypoints = ReverseWaypoints(centerline);
-
             CreateLaneChild(roadObj.transform, forwardWaypoints, "Lane_Fwd");
             CreateLaneChild(roadObj.transform, reverseWaypoints, "Lane_Rev");
         }
 
-        // --- 3. Add a procedural 3D mesh per lane for rendering ---
-        LaneAuthoring[] laneChildren = roadObj.GetComponentsInChildren<LaneAuthoring>();
-        foreach (LaneAuthoring lane in laneChildren)
-        {
-            MeshFilter mf = lane.gameObject.AddComponent<MeshFilter>();
-            MeshRenderer mr = lane.gameObject.AddComponent<MeshRenderer>();
-            mf.mesh = RoadMeshBuilder.CreateRoadMesh(lane.waypoints, laneWidth);
-            if (asphaltMaterial != null)
-                mr.sharedMaterial = asphaltMaterial;
-        }
-
+        // NOTE: Mesh Generation moved to GraphFlattener to allow for intersection trimming!
         return road;
     }
 
     private void CreateLaneChild(Transform parent, List<Vector3> flowWaypoints, string laneName)
     {
         List<Vector3> offsetWaypoints = OffsetWaypointsRight(flowWaypoints, LaneOffset);
-
         GameObject laneObj = new GameObject(laneName);
         laneObj.transform.SetParent(parent);
-
         LaneAuthoring lane = laneObj.AddComponent<LaneAuthoring>();
         lane.waypoints = offsetWaypoints;
     }
 
-    // ==========================================
-    // LANE GEOMETRY MATH (X/Y Plane with Z elevation)
-    // ==========================================
-
-    /// <summary>
-    /// Offsets every waypoint to the right of the flow direction using
-    /// the 2D perpendicular: right = (dir.y, -dir.x, 0). Preserves Z.
-    /// </summary>
     private static List<Vector3> OffsetWaypointsRight(List<Vector3> waypoints, float offset)
     {
         List<Vector3> result = new List<Vector3>(waypoints.Count);
-
         for (int i = 0; i < waypoints.Count; i++)
         {
             Vector3 dir;
@@ -448,13 +381,11 @@ public class MapGenerator : MonoBehaviour
             else
                 dir = (waypoints[i] - waypoints[i - 1]).normalized;
 
-            // 2D perpendicular right-hand vector (Z untouched)
             Vector3 right = new Vector3(dir.y, -dir.x, 0f);
             Vector3 offset3 = waypoints[i] + right * offset;
             offset3.z = waypoints[i].z;
             result.Add(offset3);
         }
-
         return result;
     }
 
@@ -465,17 +396,12 @@ public class MapGenerator : MonoBehaviour
         return reversed;
     }
 
-    // ==========================================
-    // DYNAMIC ROAD SPLITTING
-    // ==========================================
-
     public Vertex SplitRoad(Road originalRoad, Vector3 splitPoint)
     {
         List<Vector3> pts = originalRoad.centerlineWaypoints;
         int splitIndex = 0;
         float minDist = float.MaxValue;
 
-        // Find the exact curve segment to slice on the centerline
         for (int i = 0; i < pts.Count - 1; i++)
         {
             Vector3 proj = ProjectPointOnLineSegment(pts[i], pts[i + 1], splitPoint);
@@ -487,28 +413,20 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
-        // Slice into Part 1
         List<Vector3> part1 = new List<Vector3>();
         for (int i = 0; i <= splitIndex; i++) part1.Add(pts[i]);
         part1.Add(splitPoint);
 
-        // Slice into Part 2
         List<Vector3> part2 = new List<Vector3>();
         part2.Add(splitPoint);
         for (int i = splitIndex + 1; i < pts.Count; i++) part2.Add(pts[i]);
 
-        // 1. Spawn the brand new custom Vertex
         GameObject vObj = Instantiate(vertexPrefab, splitPoint, Quaternion.identity, vertexContainer);
         vObj.name = $"Vertex_CustomStop_{activeVertices.Count}";
         Vertex newVertex = vObj.GetComponent<Vertex>();
-
-        // Make it green!
         newVertex.SetAsTransitStop(true);
-
-        // Add it to our dictionary with a unique Guid so it's formally part of the network
         activeVertices[System.Guid.NewGuid().ToString()] = newVertex;
 
-        // Build a RoadProperties from the original Road's data
         RoadProperties props = new RoadProperties
         {
             streetName = originalRoad.roadName,
@@ -516,13 +434,10 @@ public class MapGenerator : MonoBehaviour
             isOneWay = originalRoad.isOneWay
         };
 
-        // 2. Spawn the two new Roads (with their own LaneAuthoring children)
-        Road road1 = CreateRoad(originalRoad.vertexA, newVertex, part1, props, "_PartA");
-        Road road2 = CreateRoad(newVertex, originalRoad.vertexB, part2, props, "_PartB");
+        CreateRoad(originalRoad.vertexA, newVertex, part1, props, "_PartA");
+        CreateRoad(newVertex, originalRoad.vertexB, part2, props, "_PartB");
 
-        // 3. Destroy the original unbroken road
         Destroy(originalRoad.gameObject);
-
         return newVertex;
     }
 

@@ -6,29 +6,19 @@ using Unity.Jobs;
 public struct MapSpatialDataJob : IJobParallelFor
 {
     [ReadOnly] public NativeArray<CarData> cars;
+    public NativeArray<CarSpatialData> spatialData;
 
-    // WriteOnly because we are completely overwriting it every frame
-    [WriteOnly] public NativeArray<CarSpatialData> spatialData;
-
-    public void Execute(int index)
+    public void Execute(int i)
     {
-        CarData car = cars[index];
+        CarData car = cars[i];
 
-        int sortLane = car.currentLaneIndex;
-        float sortDist = car.distanceAlongLane;
-
-        // FIX: Don't let turning cars disappear!
-        // Project their distance onto the new lane so cars on the new lane see them coming.
-        if (car.state == TrafficState.NavigatingIntersection)
+        // Because the new Bezier math seamlessly handles the intersection
+        // distance inside of distanceAlongLane, we don't need any complex state checks!
+        spatialData[i] = new CarSpatialData
         {
-            sortDist = car.curveDropoffDistance - (car.maxSpeed - car.curveDistanceAlongPath);
-        }
-
-        spatialData[index] = new CarSpatialData
-        {
-            carIndex = index,
-            laneIndex = sortLane,
-            distanceAlongLane = sortDist
+            carIndex = i,
+            laneIndex = car.currentLaneIndex,
+            distanceAlongLane = car.distanceAlongLane
         };
     }
 }
