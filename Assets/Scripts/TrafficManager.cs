@@ -16,6 +16,9 @@ public class TrafficManager : MonoBehaviour
         else Destroy(gameObject);
     }
 
+    [Header("Debug Visualization")]
+    public bool showDebugGizmos = false; // Default to false for performance
+
     [Header("Simulation Settings")]
     public int initialCarCount = 1000;
     public GameObject carVisualPrefab; // We'll use a simple cube for now

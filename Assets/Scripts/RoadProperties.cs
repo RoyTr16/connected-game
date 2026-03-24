@@ -26,13 +26,13 @@ public class RoadProperties
     public bool isRoundabout;
 
     // A static factory method to parse the messy JSON into our clean object
-    public static RoadProperties ParseFromGeoJSON(JToken propertiesToken)
+    public static RoadProperties ParseFromOsmTags(JToken tagsToken)
     {
         RoadProperties props = new RoadProperties();
 
         // 1. Parse Names (Force English if available)
-        string englishName = propertiesToken["name:en"]?.ToString();
-        string localName = propertiesToken["name"]?.ToString();
+        string englishName = tagsToken["name:en"]?.ToString();
+        string localName = tagsToken["name"]?.ToString();
 
         if (!string.IsNullOrEmpty(englishName))
             props.streetName = englishName;
@@ -42,11 +42,11 @@ public class RoadProperties
             props.streetName = "Unnamed Road";
 
         // 2. Parse Highway Type
-        string highwayTag = propertiesToken["highway"]?.ToString().ToLower() ?? "unclassified";
+        string highwayTag = tagsToken["highway"]?.ToString().ToLower() ?? "unclassified";
         props.type = ParseHighwayType(highwayTag);
 
         // 3. Parse One-Way Data
-        string oneWayTag = propertiesToken["oneway"]?.ToString().ToLower();
+        string oneWayTag = tagsToken["oneway"]?.ToString()?.ToLower();
         if (oneWayTag == "yes" || oneWayTag == "true" || oneWayTag == "1")
         {
             props.isOneWay = true;
@@ -63,7 +63,7 @@ public class RoadProperties
         }
 
         // 4. Parse Roundabouts
-        string junctionTag = propertiesToken["junction"]?.ToString().ToLower();
+        string junctionTag = tagsToken["junction"]?.ToString()?.ToLower();
         if (junctionTag == "roundabout")
         {
             props.isRoundabout = true;
@@ -72,7 +72,7 @@ public class RoadProperties
         }
 
         // 5. Parse Speed Limits (OSM maxspeed is usually in km/h)
-        string speedTag = propertiesToken["maxspeed"]?.ToString();
+        string speedTag = tagsToken["maxspeed"]?.ToString();
         props.maxSpeed = ParseSpeedLimit(speedTag, props.type);
 
         return props;

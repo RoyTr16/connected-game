@@ -28,6 +28,8 @@ public class TransitNode : MonoBehaviour
 
     private void OnDrawGizmosSelected()
     {
+        if (MapGenerator.Instance != null && !MapGenerator.Instance.showDebugGizmos) return;
+
         Gizmos.color = Color.red;
         foreach (TransitNode neighbor in neighbors)
         {

@@ -6,6 +6,7 @@ using System.Collections.Generic;
 public class Vertex : MonoBehaviour
 {
     [Header("Graph Data")]
+    public long osmNodeId;
     public List<Road> connectedRoads = new List<Road>();
 
     // We can toggle this when the player drops a bus stop here
@@ -70,6 +71,8 @@ public class Vertex : MonoBehaviour
     // Draws red debug lines in the Unity Editor to prove the graph is connected
     private void OnDrawGizmosSelected()
     {
+        if (MapGenerator.Instance != null && !MapGenerator.Instance.showDebugGizmos) return;
+
         Gizmos.color = Color.red;
         foreach (Road road in connectedRoads)
         {

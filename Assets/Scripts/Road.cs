@@ -4,6 +4,7 @@ using System.Collections.Generic;
 public class Road : MonoBehaviour
 {
     [Header("OSM Data")]
+    public long osmWayId;
     public string roadName;
     public float speedLimit;
     public bool isOneWay;

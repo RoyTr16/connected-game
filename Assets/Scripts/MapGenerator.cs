@@ -20,6 +20,9 @@ public class MapGenerator : MonoBehaviour
     public Material lineMaterial;
     public float roadWidth = 8f;
 
+    [Header("Debug Visualization")]
+    public bool showDebugGizmos = false; // Default to false for performance
+
     [Header("Simulation Objects")]
     public GameObject vertexPrefab;
     [SerializeField] private bool showVertices = true;
@@ -28,14 +31,23 @@ public class MapGenerator : MonoBehaviour
     private Vector2 originLonLat;
     private bool isOriginSet = false;
 
-    // Tracks every spawned intersection so we don't spawn duplicates
-    private Dictionary<string, Vertex> activeVertices = new Dictionary<string, Vertex>();
+    // OSM ID-keyed lookups
+    private Dictionary<long, Vector3> osmNodePositions = new Dictionary<long, Vector3>();
+    private Dictionary<long, Dictionary<string, string>> osmNodeTags = new Dictionary<long, Dictionary<string, string>>();
+    private Dictionary<long, Vertex> osmNodeToVertex = new Dictionary<long, Vertex>();
+
+    // Traffic rule storage (parsed from relations — not applied to GameObjects yet)
+    public Dictionary<long, string> nodeTrafficRules { get; private set; } = new Dictionary<long, string>();
+    public List<OsmTurnRestriction> turnRestrictions { get; private set; } = new List<OsmTurnRestriction>();
 
     private const float LaneOffset = 1.5f;
 
     // Graph containers to keep the hierarchy clean
     private Transform vertexContainer;
     private Transform roadContainer;
+
+    // Tracks vertices by coordinate key for deduplication
+    private Dictionary<string, Vertex> activeVertices = new Dictionary<string, Vertex>();
 
     void Start()
     {
@@ -70,111 +82,190 @@ public class MapGenerator : MonoBehaviour
         }
     }
 
+    // ==========================================
+    // 3-PASS RAW OSM JSON PARSER
+    // ==========================================
+
     void GenerateSpatialGraph()
     {
         JObject mapData = JObject.Parse(geoJsonFile.text);
-        JArray features = (JArray)mapData["features"];
+        JArray elements = (JArray)mapData["elements"];
 
-        // --- PASS 1: THE SURVEYOR ---
-        Dictionary<string, int> coordinateOccurrences = new Dictionary<string, int>();
-        // Track the names of streets touching each coordinate to classify the vertex
-        Dictionary<string, HashSet<string>> coordinateStreetNames = new Dictionary<string, HashSet<string>>();
+        // Separate elements by type for ordered processing
+        List<JToken> nodeElements = new List<JToken>();
+        List<JToken> wayElements = new List<JToken>();
+        List<JToken> relationElements = new List<JToken>();
 
-        foreach (JToken feature in features)
+        foreach (JToken element in elements)
         {
-            if (feature["geometry"]["type"].ToString() == "LineString")
+            string type = element["type"].ToString();
+            if (type == "node") nodeElements.Add(element);
+            else if (type == "way") wayElements.Add(element);
+            else if (type == "relation") relationElements.Add(element);
+        }
+
+        // =====================================================
+        // PASS 1: NODES — Build coordinate lookup + traffic rules
+        // =====================================================
+        foreach (JToken node in nodeElements)
+        {
+            long id = (long)node["id"];
+            double lat = (double)node["lat"];
+            double lon = (double)node["lon"];
+
+            if (!isOriginSet)
             {
-                JArray coordinates = (JArray)feature["geometry"]["coordinates"];
+                originLonLat = new Vector2((float)lon, (float)lat);
+                isOriginSet = true;
+            }
 
-                // Grab the English name first, fallback to Hebrew or Unnamed
-                string englishName = feature["properties"]["name:en"]?.ToString();
-                string localName = feature["properties"]["name"]?.ToString();
-                string roadName = !string.IsNullOrEmpty(englishName) ? englishName : (localName ?? "Unnamed Road");
+            float x = (float)((lon - originLonLat.x) * mapScale * Mathf.Cos(originLonLat.y * Mathf.Deg2Rad));
+            float y = (float)((lat - originLonLat.y) * mapScale);
+            Vector3 worldPos = new Vector3(x, y, 0f);
+            osmNodePositions[id] = worldPos;
 
-                for (int i = 0; i < coordinates.Count; i++)
+            // Parse node tags for traffic signals / stop signs
+            JToken tags = node["tags"];
+            if (tags != null)
+            {
+                Dictionary<string, string> tagDict = new Dictionary<string, string>();
+                foreach (JProperty prop in tags.Children<JProperty>())
+                    tagDict[prop.Name] = prop.Value.ToString();
+
+                osmNodeTags[id] = tagDict;
+
+                if (tagDict.TryGetValue("highway", out string highwayValue))
                 {
-                    string key = GetCoordinateKey(coordinates[i]);
-
-                    if (!coordinateOccurrences.ContainsKey(key))
-                    {
-                        coordinateOccurrences[key] = 0;
-                        coordinateStreetNames[key] = new HashSet<string>();
-                    }
-
-                    coordinateOccurrences[key]++;
-                    coordinateStreetNames[key].Add(roadName);
-
-                    if (i == 0 || i == coordinates.Count - 1)
-                    {
-                        coordinateOccurrences[key] += 2;
-                    }
+                    if (highwayValue == "traffic_signals" || highwayValue == "stop")
+                        nodeTrafficRules[id] = highwayValue;
                 }
             }
         }
 
-        // --- PASS 2: THE BUILDER ---
+        // =====================================================
+        // PASS 2: WAYS — Build Roads, Vertices, and Lanes
+        // =====================================================
+        // Pre-survey: count how many ways reference each node (for intersection detection)
+        Dictionary<long, int> nodeWayCount = new Dictionary<long, int>();
+        Dictionary<long, HashSet<string>> nodeStreetNames = new Dictionary<long, HashSet<string>>();
+
+        foreach (JToken way in wayElements)
+        {
+            JToken tags = way["tags"];
+            if (tags == null) continue;
+            string highway = tags["highway"]?.ToString()?.ToLower();
+            if (!IsDrivableHighway(highway)) continue;
+
+            string englishName = tags["name:en"]?.ToString();
+            string localName = tags["name"]?.ToString();
+            string roadName = !string.IsNullOrEmpty(englishName) ? englishName : (localName ?? "Unnamed Road");
+
+            JArray nodeIds = (JArray)way["nodes"];
+            for (int i = 0; i < nodeIds.Count; i++)
+            {
+                long nodeId = (long)nodeIds[i];
+                if (!nodeWayCount.ContainsKey(nodeId))
+                {
+                    nodeWayCount[nodeId] = 0;
+                    nodeStreetNames[nodeId] = new HashSet<string>();
+                }
+                nodeWayCount[nodeId]++;
+                nodeStreetNames[nodeId].Add(roadName);
+
+                // Endpoints of ways are always potential vertices
+                if (i == 0 || i == nodeIds.Count - 1)
+                    nodeWayCount[nodeId] += 2;
+            }
+        }
+
+        // Build the roads
         int roadCount = 0;
         int laneCount = 0;
 
-        foreach (JToken feature in features)
+        foreach (JToken way in wayElements)
         {
-            if (feature["geometry"]["type"].ToString() == "LineString")
+            long wayId = (long)way["id"];
+            JToken tags = way["tags"];
+            if (tags == null) continue;
+            string highway = tags["highway"]?.ToString()?.ToLower();
+            if (!IsDrivableHighway(highway)) continue;
+
+            RoadProperties props = RoadProperties.ParseFromOsmTags(tags);
+            JArray nodeIds = (JArray)way["nodes"];
+
+            Vertex lastVertex = null;
+            List<Vector3> currentWaypoints = new List<Vector3>();
+
+            for (int i = 0; i < nodeIds.Count; i++)
             {
-                RoadProperties props = RoadProperties.ParseFromGeoJSON(feature["properties"]);
-                JArray coordinates = (JArray)feature["geometry"]["coordinates"];
+                long nodeId = (long)nodeIds[i];
 
-                Vertex lastVertex = null;
-                List<Vector3> currentEdgeWaypoints = new List<Vector3>();
+                if (!osmNodePositions.TryGetValue(nodeId, out Vector3 worldPos))
+                    continue; // Skip if the node wasn't in our export
 
-                for (int i = 0; i < coordinates.Count; i++)
+                currentWaypoints.Add(worldPos);
+
+                // Split at intersection nodes (referenced by multiple ways or at endpoints)
+                if (nodeWayCount.ContainsKey(nodeId) && nodeWayCount[nodeId] > 1)
                 {
-                    float lon = (float)coordinates[i][0];
-                    float lat = (float)coordinates[i][1];
+                    Vertex currentVertex = GetOrCreateVertex(nodeId, worldPos, nodeStreetNames);
 
-                    if (!isOriginSet)
+                    if (lastVertex != null && lastVertex != currentVertex && currentWaypoints.Count >= 2)
                     {
-                        originLonLat = new Vector2(lon, lat);
-                        isOriginSet = true;
+                        Road road = CreateRoad(lastVertex, currentVertex, currentWaypoints, props, $"_{roadCount}");
+                        road.osmWayId = wayId;
+                        laneCount += road.GetComponentsInChildren<LaneAuthoring>().Length;
+                        roadCount++;
                     }
 
-                    float x = (lon - originLonLat.x) * mapScale * Mathf.Cos(originLonLat.y * Mathf.Deg2Rad);
-                    float y = (lat - originLonLat.y) * mapScale;
-                    Vector3 worldPos = new Vector3(x, y, 0f);
-
-                    currentEdgeWaypoints.Add(worldPos);
-                    string key = GetCoordinateKey(coordinates[i]);
-
-                    if (coordinateOccurrences[key] > 1)
-                    {
-                        Vertex currentVertex;
-                        if (activeVertices.ContainsKey(key))
-                        {
-                            currentVertex = activeVertices[key];
-                        }
-                        else
-                        {
-                            GameObject vObj = Instantiate(vertexPrefab, worldPos, Quaternion.identity, vertexContainer);
-
-                            // Label it in the Hierarchy so you know what the engine is doing
-                            bool isMajorIntersection = coordinateStreetNames[key].Count > 1;
-                            vObj.name = isMajorIntersection ? $"Vertex_Major_{activeVertices.Count}" : $"Vertex_Structural_{activeVertices.Count}";
-
-                            currentVertex = vObj.GetComponent<Vertex>();
-                            activeVertices[key] = currentVertex;
-                        }
-
-                        if (lastVertex != null && lastVertex != currentVertex)
-                        {
-                            Road road = CreateRoad(lastVertex, currentVertex, currentEdgeWaypoints, props, $"_{roadCount}");
-                            laneCount += road.GetComponentsInChildren<LaneAuthoring>().Length;
-                            roadCount++;
-                        }
-
-                        lastVertex = currentVertex;
-                        currentEdgeWaypoints.Clear();
-                        currentEdgeWaypoints.Add(worldPos);
-                    }
+                    lastVertex = currentVertex;
+                    currentWaypoints.Clear();
+                    currentWaypoints.Add(worldPos);
                 }
+            }
+        }
+
+        // =====================================================
+        // PASS 3: RELATIONS — Extract turn restrictions
+        // =====================================================
+        foreach (JToken relation in relationElements)
+        {
+            JToken tags = relation["tags"];
+            if (tags == null) continue;
+
+            string relationType = tags["type"]?.ToString();
+            if (relationType != "restriction") continue;
+
+            string restriction = tags["restriction"]?.ToString();
+            if (string.IsNullOrEmpty(restriction)) continue;
+
+            JArray members = (JArray)relation["members"];
+            if (members == null) continue;
+
+            long fromWayId = -1;
+            long viaNodeId = -1;
+            long toWayId = -1;
+
+            foreach (JToken member in members)
+            {
+                string role = member["role"]?.ToString();
+                string memberType = member["type"]?.ToString();
+                long refId = (long)member["ref"];
+
+                if (role == "from" && memberType == "way") fromWayId = refId;
+                else if (role == "via" && memberType == "node") viaNodeId = refId;
+                else if (role == "to" && memberType == "way") toWayId = refId;
+            }
+
+            if (fromWayId != -1 && viaNodeId != -1 && toWayId != -1)
+            {
+                turnRestrictions.Add(new OsmTurnRestriction
+                {
+                    fromWayId = fromWayId,
+                    viaNodeId = viaNodeId,
+                    toWayId = toWayId,
+                    restrictionType = restriction
+                });
             }
         }
 
@@ -184,7 +275,63 @@ public class MapGenerator : MonoBehaviour
             TrafficManager.Instance.InitializeTraffic();
         }
 
-        Debug.Log($"Spatial Graph Generated! Vertices: {activeVertices.Count} | Roads: {roadCount} | Lanes: {laneCount}");
+        Debug.Log($"OSM Graph Generated! Nodes: {osmNodePositions.Count} | Vertices: {activeVertices.Count} | Roads: {roadCount} | Lanes: {laneCount} | Traffic Rules: {nodeTrafficRules.Count} | Turn Restrictions: {turnRestrictions.Count}");
+    }
+
+    // ==========================================
+    // VERTEX MANAGEMENT
+    // ==========================================
+
+    private Vertex GetOrCreateVertex(long osmNodeId, Vector3 worldPos, Dictionary<long, HashSet<string>> nodeStreetNames)
+    {
+        // Use the OSM node ID as the primary key
+        if (osmNodeToVertex.TryGetValue(osmNodeId, out Vertex existing))
+            return existing;
+
+        // Also check coordinate-based dedup for split vertices
+        string coordKey = $"{worldPos.x:F2}_{worldPos.y:F2}";
+        if (activeVertices.TryGetValue(coordKey, out Vertex coordMatch))
+        {
+            osmNodeToVertex[osmNodeId] = coordMatch;
+            return coordMatch;
+        }
+
+        GameObject vObj = Instantiate(vertexPrefab, worldPos, Quaternion.identity, vertexContainer);
+
+        bool isMajor = nodeStreetNames.ContainsKey(osmNodeId) && nodeStreetNames[osmNodeId].Count > 1;
+        vObj.name = isMajor ? $"Vertex_Major_{osmNodeId}" : $"Vertex_Structural_{osmNodeId}";
+
+        Vertex vertex = vObj.GetComponent<Vertex>();
+        vertex.osmNodeId = osmNodeId;
+
+        osmNodeToVertex[osmNodeId] = vertex;
+        activeVertices[coordKey] = vertex;
+
+        return vertex;
+    }
+
+    private static bool IsDrivableHighway(string highway)
+    {
+        if (string.IsNullOrEmpty(highway)) return false;
+        switch (highway)
+        {
+            case "motorway":
+            case "motorway_link":
+            case "trunk":
+            case "trunk_link":
+            case "primary":
+            case "primary_link":
+            case "secondary":
+            case "secondary_link":
+            case "tertiary":
+            case "tertiary_link":
+            case "residential":
+            case "unclassified":
+            case "living_street":
+                return true;
+            default:
+                return false;
+        }
     }
     public Road CreateRoad(Vertex vA, Vertex vB, List<Vector3> centerline, RoadProperties props, string nameSuffix = "")
     {
@@ -282,14 +429,6 @@ public class MapGenerator : MonoBehaviour
         List<Vector3> reversed = new List<Vector3>(waypoints);
         reversed.Reverse();
         return reversed;
-    }
-
-    // Rounds the coordinate to ~1 meter precision to act as a mathematical dictionary key
-    private string GetCoordinateKey(JToken coord)
-    {
-        double lon = Math.Round((double)coord[0], 5);
-        double lat = Math.Round((double)coord[1], 5);
-        return $"{lon}_{lat}";
     }
 
     // ==========================================
