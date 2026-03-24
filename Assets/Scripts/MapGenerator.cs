@@ -17,8 +17,7 @@ public class MapGenerator : MonoBehaviour
     public TextAsset geoJsonFile;
 
     [Header("Rendering Settings")]
-    public Material lineMaterial;
-    public float roadWidth = 8f;
+    public float laneWidth = 3.0f;
     public float layerHeightOffset = -5.0f;
 
     [Header("Visuals")]
@@ -404,20 +403,16 @@ public class MapGenerator : MonoBehaviour
             CreateLaneChild(roadObj.transform, reverseWaypoints, "Lane_Rev");
         }
 
-        // --- 3. Add a LineRenderer on the Road for visual debugging ---
-        LineRenderer lr = roadObj.AddComponent<LineRenderer>();
-        if (asphaltMaterial != null)
-            lr.material = asphaltMaterial;
-        else if (lineMaterial != null)
-            lr.material = lineMaterial;
-        lr.textureMode = LineTextureMode.Tile;
-        lr.sortingOrder = 0;
-        lr.positionCount = centerline.Count;
-        lr.SetPositions(centerline.ToArray());
-        lr.startWidth = roadWidth;
-        lr.endWidth = roadWidth;
-        lr.numCapVertices = 4;
-        lr.numCornerVertices = 4;
+        // --- 3. Add a procedural 3D mesh per lane for rendering ---
+        LaneAuthoring[] laneChildren = roadObj.GetComponentsInChildren<LaneAuthoring>();
+        foreach (LaneAuthoring lane in laneChildren)
+        {
+            MeshFilter mf = lane.gameObject.AddComponent<MeshFilter>();
+            MeshRenderer mr = lane.gameObject.AddComponent<MeshRenderer>();
+            mf.mesh = RoadMeshBuilder.CreateRoadMesh(lane.waypoints, laneWidth);
+            if (asphaltMaterial != null)
+                mr.sharedMaterial = asphaltMaterial;
+        }
 
         return road;
     }
