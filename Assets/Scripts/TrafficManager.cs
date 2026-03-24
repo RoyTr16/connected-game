@@ -130,7 +130,9 @@ public class TrafficManager : MonoBehaviour
         // --- 3. VISUALS ---
         for (int i = 0; i < _cars.Length; i++)
         {
-            _carVisuals[i].position = _cars[i].position;
+            Vector3 pos = _cars[i].position;
+            pos.z -= 0.5f; // Lift cars above the road surface to prevent Z-fighting
+            _carVisuals[i].position = pos;
             _carVisuals[i].rotation = _cars[i].rotation;
         }
     }

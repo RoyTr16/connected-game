@@ -21,6 +21,9 @@ public class MapGenerator : MonoBehaviour
     public float roadWidth = 8f;
     public float layerHeightOffset = -5.0f;
 
+    [Header("Visuals")]
+    [SerializeField] private Material asphaltMaterial;
+
     [Header("Debug Visualization")]
     public bool showDebugGizmos = false; // Default to false for performance
 
@@ -403,7 +406,11 @@ public class MapGenerator : MonoBehaviour
 
         // --- 3. Add a LineRenderer on the Road for visual debugging ---
         LineRenderer lr = roadObj.AddComponent<LineRenderer>();
-        if (lineMaterial != null) lr.material = lineMaterial;
+        if (asphaltMaterial != null)
+            lr.material = asphaltMaterial;
+        else if (lineMaterial != null)
+            lr.material = lineMaterial;
+        lr.textureMode = LineTextureMode.Tile;
         lr.sortingOrder = 0;
         lr.positionCount = centerline.Count;
         lr.SetPositions(centerline.ToArray());
