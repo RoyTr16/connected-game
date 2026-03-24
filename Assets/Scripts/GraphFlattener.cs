@@ -180,18 +180,20 @@ public class GraphFlattener
             intersectionWaypoints[i] = intersectionCurveList[i];
 
         // =====================================================
-        // STEP 5: Trim Lane Meshes and Generate Visuals
+        // STEP 5: Trim Main Lanes & Generate Visuals
         // =====================================================
         for (int i = 0; i < allLanes.Count; i++)
         {
             LaneAuthoring lane = allLanes[i];
+            float laneLen = CalculateLength(lane.waypoints);
+
             bool hasOutgoing = connectionTargets[i].Count > 0;
             bool hasIncoming = hasIncomingConnection[i];
 
-            // Only trim if the road is actually long enough
-            float laneLen = CalculateLength(lane.waypoints);
-            float trimStart = (hasIncoming && laneLen > 15f) ? 5.0f : 0f;
-            float trimEnd = (hasOutgoing && laneLen > 15f) ? 5.0f : 0f;
+            // PROPORTIONAL TRIM: Max 3.5m, but never more than 30% of the lane length.
+            // This perfectly protects tiny roundabout segments!
+            float trimStart = hasIncoming ? math.min(3.5f, laneLen * 0.3f) : 0f;
+            float trimEnd = hasOutgoing ? math.min(3.5f, laneLen * 0.3f) : 0f;
 
             List<Vector3> meshWaypoints = TrimWaypoints(lane.waypoints, trimStart, trimEnd);
 
@@ -223,33 +225,36 @@ public class GraphFlattener
 
     private Connection BakeConnection(LaneAuthoring laneA, LaneAuthoring laneB, Vertex exitVertex, List<float3> curveList)
     {
-        // We need to look up the flat lane data to check their lengths!
         int idxA = objectToLaneIndex[laneA];
         int idxB = objectToLaneIndex[laneB];
         LaneStruct flatA = nativeLanes[idxA];
         LaneStruct flatB = nativeLanes[idxB];
 
-        // Exit direction of Lane A (looking at its last 2 waypoints)
         List<Vector3> wpA = laneA.waypoints;
         Vector3 rawDirA = wpA[wpA.Count - 1] - wpA[wpA.Count - 2];
         Vector3 dirA = rawDirA.sqrMagnitude > 0.0001f ? rawDirA.normalized : Vector3.right;
 
-        // Entry direction of Lane B (looking at its first 2 waypoints)
         List<Vector3> wpB = laneB.waypoints;
         Vector3 rawDirB = wpB[1] - wpB[0];
         Vector3 dirB = rawDirB.sqrMagnitude > 0.0001f ? rawDirB.normalized : Vector3.right;
 
-        // Dynamically calculate the trim (matching our visual mesh logic)
-        float exitTrim = (flatA.length > 15f) ? 5.0f : 0f;
-        float entryTrim = (flatB.length > 15f) ? 5.0f : 0f;
+        // MATCH THE VISUAL TRIM EXACTLY
+        float exitTrim = math.min(3.5f, flatA.length * 0.3f);
+        float entryTrim = math.min(3.5f, flatB.length * 0.3f);
 
-        // The mathematically perfect Bezier triangle, now fully synced with the visual trim!
         float3 p0 = (float3)(wpA[wpA.Count - 1] - dirA * exitTrim);
-        float3 p1 = (float3)exitVertex.transform.position;
         float3 p2 = (float3)(wpB[0] + dirB * entryTrim);
 
-        List<float3> curvePoints = GenerateBezierCurve(p0, p1, p2, 15);
+        // CALCULATE THE PERFECT CONTROL POINT (No more Centerline Magnet!)
+        Vector3 p1Vector = CalculateIntersectionControlPoint((Vector3)p0, dirA, (Vector3)p2, dirB);
 
+        // Maintain the 3D elevation of the intersection
+        p1Vector.z = exitVertex.transform.position.z;
+        float3 p1 = (float3)p1Vector;
+
+        List<float3> curvePoints = GenerateBezierCurve(p0, p1, p2, 12);
+
+        // BUILD THE BEZIER RIBBON MESH
         if (asphaltMaterial != null && _connectionContainer != null)
         {
             List<Vector3> meshPoints = new List<Vector3>(curvePoints.Count);
@@ -257,11 +262,18 @@ public class GraphFlattener
 
             GameObject connObj = new GameObject("ConnectionMesh");
             connObj.transform.SetParent(_connectionContainer);
+
+            // Micro-offset on the Z axis to prevent Z-fighting if multiple turns overlap!
+            connObj.transform.position = new Vector3(0, 0, -0.01f * (curveList.Count % 20));
+
             MeshFilter mf = connObj.AddComponent<MeshFilter>();
             MeshRenderer mr = connObj.AddComponent<MeshRenderer>();
             mf.mesh = RoadMeshBuilder.CreateRoadMesh(meshPoints, laneWidth);
             mr.sharedMaterial = asphaltMaterial;
         }
+
+        int curveStart = curveList.Count;
+        foreach (var p in curvePoints) curveList.Add(p);
 
         return new Connection
         {
@@ -270,13 +282,43 @@ public class GraphFlattener
             p1 = p1,
             p2 = p2,
             curveLength = CalculateCurveLength(curvePoints),
-            exitTrim = exitTrim,   // Saved to DOTS!
-            entryTrim = entryTrim  // Saved to DOTS!
+            exitTrim = exitTrim,
+            entryTrim = entryTrim
         };
     }
     // =====================================================
     // MATH UTILITIES
     // =====================================================
+
+    /// Calculates the perfect Bezier control point by intersecting the forward ray of Lane A and the backward ray of Lane B.
+    private Vector3 CalculateIntersectionControlPoint(Vector3 p0, Vector3 dirA, Vector3 p2, Vector3 dirB)
+    {
+        // 2D Cross Product to check if lines are parallel
+        float cross = dirA.x * dirB.y - dirA.y * dirB.x;
+
+        // If lines are parallel (straight road) or near-parallel, just take the midpoint.
+        if (Mathf.Abs(cross) < 0.001f)
+        {
+            return Vector3.Lerp(p0, p2, 0.5f);
+        }
+
+        Vector3 diff = p2 - p0;
+        float t1 = (diff.x * dirB.y - diff.y * dirB.x) / cross;
+        Vector3 intersection = p0 + dirA * t1;
+
+        // Validate the intersection: It must be IN FRONT of p0 and BEHIND p2.
+        // If it's a weird acute angle (like a U-turn) the math might intersect behind the car.
+        float dotA = Vector3.Dot((intersection - p0).normalized, dirA);
+        float dotB = Vector3.Dot((p2 - intersection).normalized, dirB);
+
+        // If valid, use the intersection. If the OSM geometry is tangled, fallback to midpoint.
+        if (dotA > 0.5f && dotB > 0.5f)
+        {
+            return intersection;
+        }
+
+        return Vector3.Lerp(p0, p2, 0.5f);
+    }
 
     private List<float3> GenerateBezierCurve(float3 p0, float3 p1, float3 p2, int count)
     {
