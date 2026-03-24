@@ -22,6 +22,7 @@ public class MapGenerator : MonoBehaviour
 
     [Header("Simulation Objects")]
     public GameObject vertexPrefab;
+    [SerializeField] private bool showVertices = true;
 
     private float mapScale = 111000f;
     private Vector2 originLonLat;
@@ -47,10 +48,25 @@ public class MapGenerator : MonoBehaviour
             roadContainer.SetParent(this.transform);
 
             GenerateSpatialGraph();
+            vertexContainer.gameObject.SetActive(showVertices);
         }
         else
         {
             Debug.LogError("No GeoJSON file assigned!");
+        }
+    }
+
+    private void OnValidate()
+    {
+        if (vertexContainer != null)
+        {
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.delayCall += () =>
+            {
+                if (vertexContainer != null)
+                    vertexContainer.gameObject.SetActive(showVertices);
+            };
+#endif
         }
     }
 
