@@ -14,15 +14,21 @@ public struct MapSpatialDataJob : IJobParallelFor
     {
         CarData car = cars[index];
 
-        // We only care about cars actively driving on roads.
-        // Cars navigating intersection curves get a "dummy" edge so they don't crash others.
-        int sortEdge = (car.state == TrafficState.Driving) ? car.currentEdgeIndex : -1;
+        int sortEdge = car.currentEdgeIndex;
+        float sortDist = car.distanceAlongEdge;
+
+        // FIX: Don't let turning cars disappear!
+        // Project their distance onto the new street so cars on the new street see them coming.
+        if (car.state == TrafficState.NavigatingIntersection)
+        {
+            sortDist = car.curveDropoffDistance - (car.maxSpeed - car.curveDistanceAlongPath);
+        }
 
         spatialData[index] = new CarSpatialData
         {
             carIndex = index,
             edgeIndex = sortEdge,
-            distanceAlongEdge = car.distanceAlongEdge
+            distanceAlongEdge = sortDist
         };
     }
 }

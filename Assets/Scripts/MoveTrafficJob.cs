@@ -71,16 +71,28 @@ public struct MoveTrafficJob : IJobParallelFor
 
             if (hasLeader)
             {
-                // IDM Formula for following a car
                 float deltaV = v - leaderSpeed;
                 float s_star = s0 + (v * T) + ((v * deltaV) / (2f * math.sqrt(a * b)));
-                if (s_star < s0) s_star = s0; // Never desire a gap smaller than the minimum
+                if (s_star < s0) s_star = s0;
 
                 accel = a * (1f - math.pow(v / v0, 4f) - math.pow(s_star / distanceToLeader, 2f));
+
+                // --- NEW: THE HARD PHYSICAL CLAMP (Anti-Clipping) ---
+                // If they get dangerously close, forbid them from exceeding the leader's speed
+                if (distanceToLeader < 2.0f)
+                {
+                    car.currentSpeed = math.min(car.currentSpeed, leaderSpeed);
+                }
+
+                // --- NEW: ANTI-DEADLOCK ---
+                // If they somehow clipped inside each other, force the follower to bleed speed so they separate
+                if (distanceToLeader < 0.1f)
+                {
+                    car.currentSpeed = leaderSpeed * 0.8f;
+                }
             }
             else
             {
-                // IDM Formula for an empty road
                 accel = a * (1f - math.pow(v / v0, 4f));
             }
 
