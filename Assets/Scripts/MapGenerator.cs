@@ -30,9 +30,11 @@ public class MapGenerator : MonoBehaviour
     // Tracks every spawned intersection so we don't spawn duplicates
     private Dictionary<string, Vertex> activeVertices = new Dictionary<string, Vertex>();
 
+    private const float LaneOffset = 1.5f;
+
     // Graph containers to keep the hierarchy clean
     private Transform vertexContainer;
-    private Transform edgeContainer;
+    private Transform roadContainer;
 
     void Start()
     {
@@ -41,8 +43,8 @@ public class MapGenerator : MonoBehaviour
             vertexContainer = new GameObject("Graph_Vertices").transform;
             vertexContainer.SetParent(this.transform);
 
-            edgeContainer = new GameObject("Graph_Edges").transform;
-            edgeContainer.SetParent(this.transform);
+            roadContainer = new GameObject("Graph_Roads").transform;
+            roadContainer.SetParent(this.transform);
 
             GenerateSpatialGraph();
         }
@@ -95,7 +97,8 @@ public class MapGenerator : MonoBehaviour
         }
 
         // --- PASS 2: THE BUILDER ---
-        int edgeCount = 0;
+        int roadCount = 0;
+        int laneCount = 0;
 
         foreach (JToken feature in features)
         {
@@ -146,8 +149,9 @@ public class MapGenerator : MonoBehaviour
 
                         if (lastVertex != null && lastVertex != currentVertex)
                         {
-                            CreateEdge(lastVertex, currentVertex, currentEdgeWaypoints, props, $"_{edgeCount}");
-                            edgeCount++;
+                            Road road = CreateRoad(lastVertex, currentVertex, currentEdgeWaypoints, props, $"_{roadCount}");
+                            laneCount += road.GetComponentsInChildren<LaneAuthoring>().Length;
+                            roadCount++;
                         }
 
                         lastVertex = currentVertex;
@@ -164,20 +168,104 @@ public class MapGenerator : MonoBehaviour
             TrafficManager.Instance.InitializeTraffic();
         }
 
-        Debug.Log($"Spatial Graph Generated! Vertices: {activeVertices.Count} | Edges: {edgeCount}");
+        Debug.Log($"Spatial Graph Generated! Vertices: {activeVertices.Count} | Roads: {roadCount} | Lanes: {laneCount}");
     }
-    public Edge CreateEdge(Vertex vA, Vertex vB, List<Vector3> waypoints, RoadProperties props, string nameSuffix = "")
+    public Road CreateRoad(Vertex vA, Vertex vB, List<Vector3> centerline, RoadProperties props, string nameSuffix = "")
     {
-        GameObject edgeObj = new GameObject($"Edge_{props.streetName}{nameSuffix}");
-        edgeObj.transform.SetParent(edgeContainer);
+        // --- 1. Create the Road parent ---
+        GameObject roadObj = new GameObject($"Road_{props.streetName}{nameSuffix}");
+        roadObj.transform.SetParent(roadContainer);
 
-        Edge newEdge = edgeObj.AddComponent<Edge>();
+        Road road = roadObj.AddComponent<Road>();
+        road.roadName = props.streetName;
+        road.speedLimit = props.maxSpeed;
+        road.isOneWay = props.isOneWay;
+        road.vertexA = vA;
+        road.vertexB = vB;
+        road.centerlineWaypoints = new List<Vector3>(centerline);
 
-        LineRenderer lr = edgeObj.GetComponent<LineRenderer>();
+        // Tell the vertices this road connects to them
+        if (vA != null) vA.AddRoad(road);
+        if (vB != null) vB.AddRoad(road);
+
+        // --- 2. Spawn LaneAuthoring children ---
+        if (props.isOneWay)
+        {
+            // Determine the actual flow direction based on OSM reversed tag
+            List<Vector3> flowWaypoints = props.isReversedOneWay
+                ? ReverseWaypoints(centerline)
+                : new List<Vector3>(centerline);
+
+            CreateLaneChild(roadObj.transform, flowWaypoints, "Lane_0");
+        }
+        else
+        {
+            // Two-way: Lane 0 = forward flow, Lane 1 = reverse flow
+            List<Vector3> forwardWaypoints = new List<Vector3>(centerline);
+            List<Vector3> reverseWaypoints = ReverseWaypoints(centerline);
+
+            CreateLaneChild(roadObj.transform, forwardWaypoints, "Lane_Fwd");
+            CreateLaneChild(roadObj.transform, reverseWaypoints, "Lane_Rev");
+        }
+
+        // --- 3. Add a LineRenderer on the Road for visual debugging ---
+        LineRenderer lr = roadObj.AddComponent<LineRenderer>();
         if (lineMaterial != null) lr.material = lineMaterial;
+        lr.sortingOrder = 0;
+        lr.positionCount = centerline.Count;
+        lr.SetPositions(centerline.ToArray());
+        lr.startWidth = roadWidth;
+        lr.endWidth = roadWidth;
+        lr.numCapVertices = 4;
+        lr.numCornerVertices = 4;
 
-        newEdge.Initialize(vA, vB, waypoints, props, roadWidth);
-        return newEdge;
+        return road;
+    }
+
+    private void CreateLaneChild(Transform parent, List<Vector3> flowWaypoints, string laneName)
+    {
+        List<Vector3> offsetWaypoints = OffsetWaypointsRight(flowWaypoints, LaneOffset);
+
+        GameObject laneObj = new GameObject(laneName);
+        laneObj.transform.SetParent(parent);
+
+        LaneAuthoring lane = laneObj.AddComponent<LaneAuthoring>();
+        lane.waypoints = offsetWaypoints;
+    }
+
+    // ==========================================
+    // LANE GEOMETRY MATH (2D X/Y Plane, Z=0)
+    // ==========================================
+
+    /// <summary>
+    /// Offsets every waypoint to the right of the flow direction using
+    /// the 2D perpendicular: right = (dir.y, -dir.x, 0).
+    /// </summary>
+    private static List<Vector3> OffsetWaypointsRight(List<Vector3> waypoints, float offset)
+    {
+        List<Vector3> result = new List<Vector3>(waypoints.Count);
+
+        for (int i = 0; i < waypoints.Count; i++)
+        {
+            Vector3 dir;
+            if (i < waypoints.Count - 1)
+                dir = (waypoints[i + 1] - waypoints[i]).normalized;
+            else
+                dir = (waypoints[i] - waypoints[i - 1]).normalized;
+
+            // 2D perpendicular right-hand vector
+            Vector3 right = new Vector3(dir.y, -dir.x, 0f);
+            result.Add(waypoints[i] + right * offset);
+        }
+
+        return result;
+    }
+
+    private static List<Vector3> ReverseWaypoints(List<Vector3> waypoints)
+    {
+        List<Vector3> reversed = new List<Vector3>(waypoints);
+        reversed.Reverse();
+        return reversed;
     }
 
     // Rounds the coordinate to ~1 meter precision to act as a mathematical dictionary key
@@ -189,16 +277,16 @@ public class MapGenerator : MonoBehaviour
     }
 
     // ==========================================
-    // DYNAMIC EDGE SPLITTING
+    // DYNAMIC ROAD SPLITTING
     // ==========================================
 
-    public Vertex SplitEdge(Edge originalEdge, Vector3 splitPoint)
+    public Vertex SplitRoad(Road originalRoad, Vector3 splitPoint)
     {
-        List<Vector3> pts = originalEdge.waypoints;
+        List<Vector3> pts = originalRoad.centerlineWaypoints;
         int splitIndex = 0;
         float minDist = float.MaxValue;
 
-        // Find the exact curve segment to slice on the un-reversed list
+        // Find the exact curve segment to slice on the centerline
         for (int i = 0; i < pts.Count - 1; i++)
         {
             Vector3 proj = ProjectPointOnLineSegment(pts[i], pts[i + 1], splitPoint);
@@ -231,12 +319,20 @@ public class MapGenerator : MonoBehaviour
         // Add it to our dictionary with a unique Guid so it's formally part of the network
         activeVertices[System.Guid.NewGuid().ToString()] = newVertex;
 
-        // 2. Spawn the two new Edges
-        Edge edge1 = CreateEdge(originalEdge.vertexA, newVertex, part1, originalEdge.properties, "_PartA");
-        Edge edge2 = CreateEdge(newVertex, originalEdge.vertexB, part2, originalEdge.properties, "_PartB");
+        // Build a RoadProperties from the original Road's data
+        RoadProperties props = new RoadProperties
+        {
+            streetName = originalRoad.roadName,
+            maxSpeed = (int)originalRoad.speedLimit,
+            isOneWay = originalRoad.isOneWay
+        };
+
+        // 2. Spawn the two new Roads (with their own LaneAuthoring children)
+        Road road1 = CreateRoad(originalRoad.vertexA, newVertex, part1, props, "_PartA");
+        Road road2 = CreateRoad(newVertex, originalRoad.vertexB, part2, props, "_PartB");
 
         // 3. Destroy the original unbroken road
-        Destroy(originalEdge.gameObject);
+        Destroy(originalRoad.gameObject);
 
         return newVertex;
     }

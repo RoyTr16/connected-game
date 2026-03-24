@@ -32,8 +32,7 @@ public class Edge : MonoBehaviour
         properties = props;
 
         // Automatically tell the two intersections that this road connects to them
-        if (vertexA != null) vertexA.AddEdge(this);
-        if (vertexB != null) vertexB.AddEdge(this);
+        // Edge is a legacy component — vertex registration now handled by Road
 
         UpdateVisuals(width);
         UpdateCollider();
@@ -83,7 +82,6 @@ public class Edge : MonoBehaviour
     // If the player bulldozes this road, it automatically cleans up the graph!
     private void OnDestroy()
     {
-        if (vertexA != null) vertexA.RemoveEdge(this);
-        if (vertexB != null) vertexB.RemoveEdge(this);
+        // Edge is a legacy component — no longer registers with Vertex
     }
 }

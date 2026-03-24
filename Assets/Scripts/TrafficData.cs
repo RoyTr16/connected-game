@@ -1,5 +1,5 @@
-using System; // Required for IComparable
 using Unity.Mathematics;
+using System;
 
 public static class TrafficState
 {
@@ -14,67 +14,60 @@ public struct CarData
     public float3 position;
     public quaternion rotation;
 
-    public int currentEdgeIndex;
-    public float distanceAlongEdge;
+    public int currentLaneIndex; // RENAMED: We drive on lanes now, not edges!
+    public float distanceAlongLane; // RENAMED
     public float currentSpeed;
     public float maxSpeed;
     public int state;
 
-    public bool drivingForward;
+    // drivingForward is GONE! Every lane flows perfectly from start to end.
+
     public uint randomSeed;
 
+    public int upcomingConnectionIndex;
+
+    // Intersection memory
     public int currentCurveWaypointStartIndex;
     public int curveWaypointCount;
     public float curveDistanceAlongPath;
     public float curveDropoffDistance;
-
-    // NEW: The Pre-Planned Route
-    public int upcomingConnectionIndex;
 }
 
-public struct EdgeStruct
+// RENAMED: This replaces EdgeStruct
+public struct LaneStruct
 {
+    public int parentEdgeIndex; // Keep a reference to the OSM Edge for debugging/UI
     public int startWaypointIndex;
     public int waypointCount;
     public float length;
     public float speedLimit;
-    public bool isOneWay;
     public float turnTriggerDistance;
 
-    public int forwardConnectionStart;
-    public int forwardConnectionCount;
-    public int reverseConnectionStart;
-    public int reverseConnectionCount;
+    // We no longer need 'reverse' connections. A lane only flows one way!
+    public int connectionStart;
+    public int connectionCount;
 }
 
 public struct Connection
 {
-    public int edgeIndex;
-    public bool driveForward;
+    public int laneIndex; // RENAMED: Points to the next Lane, not the Edge
     public int curveWaypointStartIndex;
     public int curveWaypointCount;
     public float curveLength;
     public float dropoffDistance;
-
-    // NEW: Mathematical flag for straight-aways
     public bool isStraight;
 }
 
-// NEW: The lightweight sorting pointer
 public struct CarSpatialData : IComparable<CarSpatialData>
 {
     public int carIndex;
-    public int edgeIndex;
-    public float distanceAlongEdge;
+    public int laneIndex; // RENAMED
+    public float distanceAlongLane; // RENAMED
 
-    // This tells the Job System exactly how to sort the array
     public int CompareTo(CarSpatialData other)
     {
-        // 1. Group by Road (EdgeIndex)
-        int edgeComparison = edgeIndex.CompareTo(other.edgeIndex);
-        if (edgeComparison != 0) return edgeComparison;
-
-        // 2. Sort by Distance (Descending! So the car in "first place" is index 0)
-        return other.distanceAlongEdge.CompareTo(distanceAlongEdge);
+        int laneComparison = laneIndex.CompareTo(other.laneIndex);
+        if (laneComparison != 0) return laneComparison;
+        return other.distanceAlongLane.CompareTo(distanceAlongLane);
     }
 }

@@ -31,16 +31,18 @@ public static class Pathfinder
 
             if (currentNode == targetNode) return RetracePath(startNode, targetNode, parentMap);
 
-            foreach (Edge edge in currentNode.connectedEdges)
+            foreach (Road road in currentNode.connectedRoads)
             {
+                if (road == null) continue;
+
                 // --- TRAFFIC LAWS ---
-                if (edge.properties.isOneWay)
+                if (road.isOneWay)
                 {
-                    if (!edge.properties.isReversedOneWay && currentNode == edge.vertexB) continue;
-                    if (edge.properties.isReversedOneWay && currentNode == edge.vertexA) continue;
+                    // On a one-way road, you can only traverse from vertexA to vertexB
+                    if (currentNode == road.vertexB) continue;
                 }
 
-                Vertex neighbor = edge.GetOppositeVertex(currentNode);
+                Vertex neighbor = (road.vertexA == currentNode) ? road.vertexB : road.vertexA;
                 if (closedSet.Contains(neighbor)) continue;
 
                 float distanceToNeighbor = Vector3.Distance(currentNode.transform.position, neighbor.transform.position);

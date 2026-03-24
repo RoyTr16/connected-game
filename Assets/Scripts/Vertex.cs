@@ -6,7 +6,7 @@ using System.Collections.Generic;
 public class Vertex : MonoBehaviour
 {
     [Header("Graph Data")]
-    public List<Edge> connectedEdges = new List<Edge>();
+    public List<Road> connectedRoads = new List<Road>();
 
     // We can toggle this when the player drops a bus stop here
     public bool isTransitStop = false;
@@ -28,19 +28,19 @@ public class Vertex : MonoBehaviour
 
     // --- Graph Logic ---
 
-    public void AddEdge(Edge newEdge)
+    public void AddRoad(Road road)
     {
-        if (!connectedEdges.Contains(newEdge))
+        if (!connectedRoads.Contains(road))
         {
-            connectedEdges.Add(newEdge);
+            connectedRoads.Add(road);
         }
     }
 
-    public void RemoveEdge(Edge edgeToRemove)
+    public void RemoveRoad(Road road)
     {
-        if (connectedEdges.Contains(edgeToRemove))
+        if (connectedRoads.Contains(road))
         {
-            connectedEdges.Remove(edgeToRemove);
+            connectedRoads.Remove(road);
         }
     }
 
@@ -71,11 +71,13 @@ public class Vertex : MonoBehaviour
     private void OnDrawGizmosSelected()
     {
         Gizmos.color = Color.red;
-        foreach (Edge edge in connectedEdges)
+        foreach (Road road in connectedRoads)
         {
-            if (edge != null && edge.GetOppositeVertex(this) != null)
+            if (road == null) continue;
+            Vertex opposite = (road.vertexA == this) ? road.vertexB : road.vertexA;
+            if (opposite != null)
             {
-                Gizmos.DrawLine(transform.position, edge.GetOppositeVertex(this).transform.position);
+                Gizmos.DrawLine(transform.position, opposite.transform.position);
             }
         }
     }

@@ -31,8 +31,8 @@ public class TrafficManager : MonoBehaviour
     public void InitializeTraffic()
     {
         // 1. Grab all active roads in the city
-        List<Edge> allEdges = FindObjectsByType<Edge>(FindObjectsInactive.Exclude).ToList();
-        if (allEdges.Count == 0)
+        List<Road> allRoads = FindObjectsByType<Road>(FindObjectsInactive.Exclude).ToList();
+        if (allRoads.Count == 0)
         {
             Debug.LogError("No roads found! Generate the map first.");
             return;
@@ -40,7 +40,14 @@ public class TrafficManager : MonoBehaviour
 
         // 2. Flatten the Object-Oriented map into hardware-friendly Native memory
         _flattener = new GraphFlattener();
-        _flattener.FlattenGraph(allEdges);
+        _flattener.FlattenGraph(allRoads);
+
+        int totalLanes = _flattener.nativeLanes.Length;
+        if (totalLanes == 0)
+        {
+            Debug.LogError("No lanes found after flattening!");
+            return;
+        }
 
         // 3. Allocate Memory for the cars (Allocator.Persistent means it lives forever)
         _cars = new NativeArray<CarData>(initialCarCount, Allocator.Persistent);
@@ -50,21 +57,19 @@ public class TrafficManager : MonoBehaviour
         // 4. Spawn the traffic data
         for (int i = 0; i < initialCarCount; i++)
         {
-            // Drop them on a random road
-            int randomEdge = UnityEngine.Random.Range(0, allEdges.Count);
-            float maxSpeed = _flattener.nativeEdges[randomEdge].speedLimit;
+            // Drop them on a random lane
+            int randomLane = UnityEngine.Random.Range(0, totalLanes);
+            float maxSpeed = _flattener.nativeLanes[randomLane].speedLimit;
 
             CarData newCar = new CarData
             {
-                currentEdgeIndex = randomEdge,
-                distanceAlongEdge = 0f,
+                currentLaneIndex = randomLane,
+                distanceAlongLane = 0f,
                 currentSpeed = maxSpeed * 0.3f,
                 maxSpeed = maxSpeed,
                 state = 0,
-
-                drivingForward = true,
                 randomSeed = (uint)UnityEngine.Random.Range(1, 1000000),
-                upcomingConnectionIndex = -1 // MUST BE -1 so the Job knows to roll a route!
+                upcomingConnectionIndex = -1
             };
             _cars[i] = newCar;
 
@@ -85,11 +90,8 @@ public class TrafficManager : MonoBehaviour
             cars = _cars,
             spatialData = _spatialData
         };
-        // Schedule the map job
         JobHandle mapHandle = mapJob.Schedule(_cars.Length, 64);
 
-        // Wait for mapping to finish, then sort the array on the Main Thread.
-        // (NativeArray.Sort uses highly optimized Native code under the hood).
         mapHandle.Complete();
         _spatialData.Sort();
 
@@ -97,9 +99,9 @@ public class TrafficManager : MonoBehaviour
         MoveTrafficJob moveJob = new MoveTrafficJob
         {
             cars = _cars,
-            spatialData = _spatialData, // NEW: Pass the sorted pointers!
-            edges = _flattener.nativeEdges,
-            centerlineWaypoints = _flattener.centerlineWaypoints,
+            spatialData = _spatialData,
+            lanes = _flattener.nativeLanes,
+            laneWaypoints = _flattener.laneWaypoints,
             intersectionWaypoints = _flattener.intersectionWaypoints,
             connections = _flattener.nativeConnections,
             deltaTime = Time.deltaTime

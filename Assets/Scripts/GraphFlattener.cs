@@ -2,181 +2,223 @@ using UnityEngine;
 using Unity.Collections;
 using Unity.Mathematics;
 using System.Collections.Generic;
-using System.Linq;
 
 public class GraphFlattener
 {
-    public NativeArray<EdgeStruct> nativeEdges;
-    public NativeArray<float3> centerlineWaypoints;
+    public NativeArray<LaneStruct> nativeLanes;
+    public NativeArray<float3> laneWaypoints;
     public NativeArray<float3> intersectionWaypoints;
     public NativeArray<Connection> nativeConnections;
 
-    public Dictionary<int, Edge> edgeIndexToObject = new Dictionary<int, Edge>();
-    private Dictionary<Edge, int> objectToEdgeIndex = new Dictionary<Edge, int>();
+    public Dictionary<int, LaneAuthoring> laneIndexToObject = new Dictionary<int, LaneAuthoring>();
+    private Dictionary<LaneAuthoring, int> objectToLaneIndex = new Dictionary<LaneAuthoring, int>();
+    private Dictionary<LaneAuthoring, Road> laneToRoad = new Dictionary<LaneAuthoring, Road>();
 
-    private const float LaneOffset2D = 1.5f;
-
-    public void FlattenGraph(List<Edge> allEdges)
+    public void FlattenGraph(List<Road> allRoads)
     {
-        int totalCenterlineWaypoints = 0;
+        // =====================================================
+        // STEP 1: Extract all LaneAuthoring children into a flat list
+        // =====================================================
+        List<LaneAuthoring> allLanes = new List<LaneAuthoring>();
+        Dictionary<Road, int> roadToIndex = new Dictionary<Road, int>();
 
-        for (int i = 0; i < allEdges.Count; i++)
+        for (int r = 0; r < allRoads.Count; r++)
         {
-            edgeIndexToObject[i] = allEdges[i];
-            objectToEdgeIndex[allEdges[i]] = i;
-            totalCenterlineWaypoints += allEdges[i].waypoints.Count;
-        }
+            Road road = allRoads[r];
+            roadToIndex[road] = r;
 
-        List<float3> intersectionCurveList = new List<float3>();
-        int totalConnectionsNeeded = 0;
-        foreach (Edge edge in allEdges)
-        {
-            totalConnectionsNeeded += GetTurnConnections_OOP(edge, true, out var _).Count;
-            totalConnectionsNeeded += GetTurnConnections_OOP(edge, false, out var _).Count;
-        }
-
-        nativeEdges = new NativeArray<EdgeStruct>(allEdges.Count, Allocator.Persistent);
-        centerlineWaypoints = new NativeArray<float3>(totalCenterlineWaypoints, Allocator.Persistent);
-        nativeConnections = new NativeArray<Connection>(totalConnectionsNeeded, Allocator.Persistent);
-
-        int currentWpOffset = 0;
-        int currentConnOffset = 0;
-
-        // 1. BAKE CENTERLINES (And calculate dynamic turn triggers!)
-        for (int i = 0; i < allEdges.Count; i++)
-        {
-            Edge oopEdge = allEdges[i];
-            float edgeLen = CalculateEdgeLength(oopEdge.waypoints);
-
-            EdgeStruct flatEdge = new EdgeStruct
+            LaneAuthoring[] children = road.GetComponentsInChildren<LaneAuthoring>();
+            foreach (LaneAuthoring lane in children)
             {
-                startWaypointIndex = currentWpOffset,
-                waypointCount = oopEdge.waypoints.Count,
-                length = edgeLen,
-                speedLimit = oopEdge.properties.maxSpeed,
-                isOneWay = oopEdge.properties.isOneWay,
+                int laneIdx = allLanes.Count;
+                laneIndexToObject[laneIdx] = lane;
+                objectToLaneIndex[lane] = laneIdx;
+                laneToRoad[lane] = road;
+                allLanes.Add(lane);
+            }
+        }
 
-                // --- FIX: DYNAMIC TURN TRIGGER ---
-                // Turn starts at 10m, but NEVER takes up more than 40% of the road!
-                turnTriggerDistance = edgeLen - math.min(10f, edgeLen * 0.4f),
+        // =====================================================
+        // STEP 2: Allocate and bake lane waypoints + LaneStructs
+        // =====================================================
+        int totalWaypoints = 0;
+        for (int i = 0; i < allLanes.Count; i++)
+            totalWaypoints += allLanes[i].waypoints.Count;
 
-                forwardConnectionStart = -1, forwardConnectionCount = 0,
-                reverseConnectionStart = -1, reverseConnectionCount = 0
+        nativeLanes = new NativeArray<LaneStruct>(allLanes.Count, Allocator.Persistent);
+        laneWaypoints = new NativeArray<float3>(totalWaypoints, Allocator.Persistent);
+
+        int wpOffset = 0;
+        for (int i = 0; i < allLanes.Count; i++)
+        {
+            LaneAuthoring lane = allLanes[i];
+            Road parentRoad = laneToRoad[lane];
+            float laneLen = CalculateLength(lane.waypoints);
+
+            LaneStruct flatLane = new LaneStruct
+            {
+                parentEdgeIndex = roadToIndex[parentRoad],
+                startWaypointIndex = wpOffset,
+                waypointCount = lane.waypoints.Count,
+                length = laneLen,
+                speedLimit = parentRoad.speedLimit,
+                turnTriggerDistance = laneLen - math.min(10f, laneLen * 0.4f),
+                connectionStart = -1,
+                connectionCount = 0
             };
-            nativeEdges[i] = flatEdge;
+            nativeLanes[i] = flatLane;
 
-            for (int w = 0; w < oopEdge.waypoints.Count; w++) centerlineWaypoints[currentWpOffset++] = oopEdge.waypoints[w];
+            for (int w = 0; w < lane.waypoints.Count; w++)
+                laneWaypoints[wpOffset++] = (float3)lane.waypoints[w];
         }
 
-        // 2. BAKE CURVE CONNECTIONS
-        for (int i = 0; i < allEdges.Count; i++)
+        // =====================================================
+        // STEP 3: Discover lane-to-lane connections (count pass)
+        // =====================================================
+        // A lane exiting at Vertex V connects to any lane that enters at V.
+        List<List<LaneAuthoring>> connectionTargets = new List<List<LaneAuthoring>>();
+        int totalConnections = 0;
+
+        for (int i = 0; i < allLanes.Count; i++)
         {
-            Edge oopEdge = allEdges[i];
-            EdgeStruct flatEdge = nativeEdges[i];
+            LaneAuthoring laneA = allLanes[i];
+            Road roadA = laneToRoad[laneA];
+            Vertex exitVertex = GetExitVertex(laneA, roadA);
 
-            List<ConnectionOOP> fwdTurns = GetTurnConnections_OOP(oopEdge, true, out var _);
-            if(fwdTurns.Count > 0)
+            List<LaneAuthoring> targets = new List<LaneAuthoring>();
+
+            foreach (Road adjRoad in exitVertex.connectedRoads)
             {
-                flatEdge.forwardConnectionStart = currentConnOffset;
-                flatEdge.forwardConnectionCount = fwdTurns.Count;
-                foreach (var turn in fwdTurns) nativeConnections[currentConnOffset++] = BakeIntersectionCurve(turn, intersectionCurveList);
+                if (adjRoad == null) continue;
+
+                LaneAuthoring[] adjLanes = adjRoad.GetComponentsInChildren<LaneAuthoring>();
+                foreach (LaneAuthoring laneB in adjLanes)
+                {
+                    if (laneB == laneA) continue;
+
+                    // LaneB must START at the same vertex that LaneA exits
+                    Vertex entryVertex = GetEntryVertex(laneB, adjRoad);
+                    if (entryVertex == exitVertex)
+                        targets.Add(laneB);
+                }
             }
 
-            List<ConnectionOOP> revTurns = GetTurnConnections_OOP(oopEdge, false, out var _);
-            if(revTurns.Count > 0)
+            connectionTargets.Add(targets);
+            totalConnections += targets.Count;
+        }
+
+        // =====================================================
+        // STEP 4: Bake connections with Bezier curves
+        // =====================================================
+        nativeConnections = new NativeArray<Connection>(totalConnections, Allocator.Persistent);
+        List<float3> intersectionCurveList = new List<float3>();
+        int connOffset = 0;
+
+        for (int i = 0; i < allLanes.Count; i++)
+        {
+            List<LaneAuthoring> targets = connectionTargets[i];
+            if (targets.Count == 0) continue;
+
+            LaneStruct flatLane = nativeLanes[i];
+            flatLane.connectionStart = connOffset;
+            flatLane.connectionCount = targets.Count;
+
+            LaneAuthoring laneA = allLanes[i];
+            Road roadA = laneToRoad[laneA];
+            Vertex exitVertex = GetExitVertex(laneA, roadA);
+
+            foreach (LaneAuthoring laneB in targets)
             {
-                flatEdge.reverseConnectionStart = currentConnOffset;
-                flatEdge.reverseConnectionCount = revTurns.Count;
-                foreach (var turn in revTurns) nativeConnections[currentConnOffset++] = BakeIntersectionCurve(turn, intersectionCurveList);
+                nativeConnections[connOffset++] = BakeConnection(laneA, laneB, exitVertex, intersectionCurveList);
             }
 
-            nativeEdges[i] = flatEdge;
+            nativeLanes[i] = flatLane;
         }
 
         intersectionWaypoints = new NativeArray<float3>(intersectionCurveList.Count, Allocator.Persistent);
-        for(int i = 0; i < intersectionCurveList.Count; i++) intersectionWaypoints[i] = intersectionCurveList[i];
+        for (int i = 0; i < intersectionCurveList.Count; i++)
+            intersectionWaypoints[i] = intersectionCurveList[i];
     }
 
-    private struct ConnectionOOP { public Edge currentEdge; public bool currentlyForward; public Edge nextEdge; public bool nextDriveForward; }
+    // =====================================================
+    // CONNECTIVITY: Determine which Vertex a lane exits/enters
+    // =====================================================
 
-    private List<ConnectionOOP> GetTurnConnections_OOP(Edge currentEdge, bool currentlyForward, out List<ConnectionOOP> outTurns)
+    private Vertex GetExitVertex(LaneAuthoring lane, Road road)
     {
-        List<ConnectionOOP> turns = new List<ConnectionOOP>();
-        Vertex exitVertex = currentlyForward ? currentEdge.vertexB : currentEdge.vertexA;
+        // The exit vertex is whichever road vertex is closest to the lane's LAST waypoint
+        Vector3 lastWp = lane.waypoints[lane.waypoints.Count - 1];
+        float distToA = Vector3.Distance(lastWp, road.vertexA.transform.position);
+        float distToB = Vector3.Distance(lastWp, road.vertexB.transform.position);
+        return distToA < distToB ? road.vertexA : road.vertexB;
+    }
 
-        foreach (Edge next in exitVertex.connectedEdges)
+    private Vertex GetEntryVertex(LaneAuthoring lane, Road road)
+    {
+        // The entry vertex is whichever road vertex is closest to the lane's FIRST waypoint
+        Vector3 firstWp = lane.waypoints[0];
+        float distToA = Vector3.Distance(firstWp, road.vertexA.transform.position);
+        float distToB = Vector3.Distance(firstWp, road.vertexB.transform.position);
+        return distToA < distToB ? road.vertexA : road.vertexB;
+    }
+
+    // =====================================================
+    // BEZIER CURVE BAKING (No more cross-products!)
+    // =====================================================
+
+    private Connection BakeConnection(LaneAuthoring laneA, LaneAuthoring laneB, Vertex exitVertex, List<float3> curveList)
+    {
+        int idxB = objectToLaneIndex[laneB];
+        LaneStruct flatA = nativeLanes[objectToLaneIndex[laneA]];
+        LaneStruct flatB = nativeLanes[idxB];
+
+        // Dynamic curve sizes (same formula: 10m max, never more than 40% of the lane)
+        float curveDistA = math.min(10f, flatA.length * 0.4f);
+        float curveDistB = math.min(10f, flatB.length * 0.4f);
+
+        // Stop point on Lane A (near its end) — waypoints are already offset!
+        float3 stopPoint = GetPointAtDistance(laneA.waypoints, flatA.length - curveDistA);
+
+        // Entry point on Lane B (near its start) — waypoints are already offset!
+        float3 entryPoint = GetPointAtDistance(laneB.waypoints, curveDistB);
+
+        // Exit direction of Lane A (last two waypoints)
+        List<Vector3> wpA = laneA.waypoints;
+        float3 rawDirA = (float3)wpA[wpA.Count - 1] - (float3)wpA[wpA.Count - 2];
+        float3 dirA = math.lengthsq(rawDirA) > 0.0001f ? math.normalize(rawDirA) : new float3(1, 0, 0);
+
+        // Entry direction of Lane B (first two waypoints)
+        List<Vector3> wpB = laneB.waypoints;
+        float3 rawDirB = (float3)wpB[1] - (float3)wpB[0];
+        float3 dirB = math.lengthsq(rawDirB) > 0.0001f ? math.normalize(rawDirB) : new float3(1, 0, 0);
+
+        // Bezier control point: the vertex sits on the centerline intersection.
+        // Since lane endpoints are already offset 1.5m into their physical lanes,
+        // using the vertex as the control point naturally arcs through the intersection.
+        float3 controlPoint = (float3)exitVertex.transform.position;
+
+        List<float3> curvePoints = GenerateBezierCurve(stopPoint, controlPoint, entryPoint, 12);
+        int curveStart = curveList.Count;
+        foreach (var p in curvePoints) curveList.Add(p);
+
+        // Straight-away check (dot > 0.95 ≈ < 18 degrees)
+        float dotAngle = math.dot(dirA, dirB);
+        bool isStraight = dotAngle > 0.95f;
+
+        return new Connection
         {
-            if (next == currentEdge) continue;
-            bool nextDriveForward = (next.vertexA == exitVertex);
-            if (next.properties.isOneWay)
-            {
-                if (!next.properties.isReversedOneWay && !nextDriveForward) continue;
-                if (next.properties.isReversedOneWay && nextDriveForward) continue;
-            }
-            turns.Add(new ConnectionOOP { currentEdge = currentEdge, currentlyForward = currentlyForward, nextEdge = next, nextDriveForward = nextDriveForward });
-        }
-        outTurns = turns;
-        return turns;
-    }
-
-    private Connection BakeIntersectionCurve(ConnectionOOP turn, List<float3> currentCurveList)
-    {
-        float3[] centerlineA = (float3[])turn.currentEdge.waypoints.Select(v => (float3)v).ToArray();
-        float3[] centerlineB = (float3[])turn.nextEdge.waypoints.Select(v => (float3)v).ToArray();
-
-        float lenA = nativeEdges[objectToEdgeIndex[turn.currentEdge]].length;
-        float lenB = nativeEdges[objectToEdgeIndex[turn.nextEdge]].length;
-
-        // --- FIX: DYNAMIC CURVE SIZES ---
-        float curveDistA = math.min(10f, lenA * 0.4f);
-        float curveDistB = math.min(10f, lenB * 0.4f);
-
-        // Calculate absolute distance from the START of each edge
-        float distFromStartA = turn.currentlyForward ? (lenA - curveDistA) : curveDistA;
-        float distFromStartB = turn.nextDriveForward ? curveDistB : (lenB - curveDistB);
-
-        float3 stopPoint = GetPointAtDistance_OOP(centerlineA, distFromStartA);
-        float3 entryPoint = GetPointAtDistance_OOP(centerlineB, distFromStartB);
-
-        float3 exitVertex = (float3)(turn.currentlyForward ? turn.currentEdge.vertexB.transform.position : turn.currentEdge.vertexA.transform.position);
-
-        // Foolproof directional vectors
-        float3 carDirA = math.normalize(exitVertex - stopPoint);
-        if(math.lengthsq(carDirA) < 0.01f) carDirA = new float3(1,0,0); // Failsafe for 0 length
-
-        float3 carDirB = math.normalize(entryPoint - exitVertex);
-        if(math.lengthsq(carDirB) < 0.01f) carDirB = new float3(1,0,0);
-
-        float3 rightA = math.normalize(new float3(carDirA.y, -carDirA.x, 0f));
-        float3 rightB = math.normalize(new float3(carDirB.y, -carDirB.x, 0f));
-
-        float3 stopPos = stopPoint + (rightA * LaneOffset2D);
-        float3 entryPos = entryPoint + (rightB * LaneOffset2D);
-
-        // --- FIX: SAFE CONTROL POINT ---
-        // Instead of messy line intersections, we just push the center vertex outward.
-        // This guarantees a perfect, natural curve hugging the inside of the lane.
-        float3 safeControlPoint = exitVertex + (math.normalize(rightA + rightB) * LaneOffset2D);
-
-        List<float3> curvePoints = GenerateBezierCurve(stopPos, safeControlPoint, entryPos, 12);
-
-        int curveStart = currentCurveList.Count;
-        foreach(var p in curvePoints) currentCurveList.Add(p);
-
-        // NEW: Calculate if this is a straight-away (Dot product > 0.95 is roughly < 18 degrees)
-        float dotAngle = math.dot(carDirA, carDirB);
-        bool isStraightPath = dotAngle > 0.95f;
-
-        return new Connection {
-            edgeIndex = objectToEdgeIndex[turn.nextEdge],
-            driveForward = turn.nextDriveForward,
+            laneIndex = idxB,
             curveWaypointStartIndex = curveStart,
             curveWaypointCount = curvePoints.Count,
-            curveLength = CalculateCurveLength_OOP(curvePoints),
+            curveLength = CalculateCurveLength(curvePoints),
             dropoffDistance = curveDistB,
-            isStraight = isStraightPath // Pass the flag to the Job
+            isStraight = isStraight
         };
     }
+
+    // =====================================================
+    // MATH UTILITIES
+    // =====================================================
 
     private List<float3> GenerateBezierCurve(float3 p0, float3 p1, float3 p2, int count)
     {
@@ -184,47 +226,49 @@ public class GraphFlattener
         for (int i = 0; i < count; i++)
         {
             float t = (float)i / (count - 1);
-            float3 blended = math.pow(1-t, 2) * p0 + 2 * (1-t) * t * p1 + math.pow(t, 2) * p2;
+            float3 blended = math.pow(1 - t, 2) * p0 + 2 * (1 - t) * t * p1 + math.pow(t, 2) * p2;
             points.Add(blended);
         }
         return points;
     }
 
-    // --- FIX: SAFER, SIMPLER DISTANCE MATH ---
-    private float3 GetPointAtDistance_OOP(float3[] centerline, float distFromStart)
+    private float3 GetPointAtDistance(List<Vector3> waypoints, float distance)
     {
-        if (centerline.Length < 2) return centerline.FirstOrDefault();
-        float distTracked = 0f;
-        for (int i = 0; i < centerline.Length - 1; i++)
+        if (waypoints.Count < 2) return (float3)waypoints[0];
+        float tracked = 0f;
+        for (int i = 0; i < waypoints.Count - 1; i++)
         {
-            float segLen = math.distance(centerline[i], centerline[i+1]);
-            if (distFromStart <= distTracked + segLen)
+            float segLen = Vector3.Distance(waypoints[i], waypoints[i + 1]);
+            if (distance <= tracked + segLen)
             {
-                return math.lerp(centerline[i], centerline[i+1], (distFromStart - distTracked) / segLen);
+                float t = (distance - tracked) / segLen;
+                return math.lerp((float3)waypoints[i], (float3)waypoints[i + 1], t);
             }
-            distTracked += segLen;
+            tracked += segLen;
         }
-        return centerline.Last();
+        return (float3)waypoints[waypoints.Count - 1];
     }
 
-    private float CalculateCurveLength_OOP(List<float3> pts)
+    private float CalculateLength(List<Vector3> pts)
     {
-        float length = 0;
-        for (int i = 0; i < pts.Count - 1; i++) length += math.distance(pts[i], pts[i + 1]);
+        float length = 0f;
+        for (int i = 0; i < pts.Count - 1; i++)
+            length += Vector3.Distance(pts[i], pts[i + 1]);
         return length;
     }
 
-    private float CalculateEdgeLength(List<Vector3> pts)
+    private float CalculateCurveLength(List<float3> pts)
     {
-        float length = 0;
-        for (int i = 0; i < pts.Count - 1; i++) length += Vector3.Distance(pts[i], pts[i + 1]);
+        float length = 0f;
+        for (int i = 0; i < pts.Count - 1; i++)
+            length += math.distance(pts[i], pts[i + 1]);
         return length;
     }
 
     public void Dispose()
     {
-        if (nativeEdges.IsCreated) nativeEdges.Dispose();
-        if (centerlineWaypoints.IsCreated) centerlineWaypoints.Dispose();
+        if (nativeLanes.IsCreated) nativeLanes.Dispose();
+        if (laneWaypoints.IsCreated) laneWaypoints.Dispose();
         if (intersectionWaypoints.IsCreated) intersectionWaypoints.Dispose();
         if (nativeConnections.IsCreated) nativeConnections.Dispose();
     }
