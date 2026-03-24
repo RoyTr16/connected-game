@@ -76,24 +76,22 @@ public class TrafficManager : MonoBehaviour
     {
         if (!_cars.IsCreated) return;
 
-        // 1. Setup the multithreaded math job
+        // Setup the multithreaded math job
         MoveTrafficJob moveJob = new MoveTrafficJob
         {
             cars = _cars,
             edges = _flattener.nativeEdges,
-            waypoints = _flattener.nativeWaypoints,
-            connections = _flattener.nativeConnections, // NEW
+            centerlineWaypoints = _flattener.centerlineWaypoints, // RENAMED
+            intersectionWaypoints = _flattener.intersectionWaypoints, // NEW
+            connections = _flattener.nativeConnections,
             deltaTime = Time.deltaTime
         };
 
-        // 2. Schedule the Job across all CPU cores.
-        // "64" is the batch size (each core grabs 64 cars at a time).
+        // Schedule and run the multithreaded jobs
         JobHandle handle = moveJob.Schedule(_cars.Length, 64);
-
-        // 3. Wait for the CPU to finish the math
         handle.Complete();
 
-        // 4. Update the visual cubes so we can see the math working!
+        // Standard Main Thread visual update
         for (int i = 0; i < _cars.Length; i++)
         {
             _carVisuals[i].position = _cars[i].position;

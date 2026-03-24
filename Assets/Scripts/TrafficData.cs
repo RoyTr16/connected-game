@@ -1,5 +1,13 @@
 using Unity.Mathematics;
 
+public static class TrafficState
+{
+    public const int Driving = 0;
+    public const int Yielding = 1;
+    public const int Stopped = 2;
+    public const int NavigatingIntersection = 3;
+}
+
 public struct CarData
 {
     public float3 position;
@@ -11,9 +19,13 @@ public struct CarData
     public float maxSpeed;
     public int state;
 
-    // NEW: Navigation
     public bool drivingForward;
-    public uint randomSeed; // Required for multithreaded randomness
+    public uint randomSeed;
+
+    public int currentCurveWaypointStartIndex;
+    public int curveWaypointCount;
+    public float curveDistanceAlongPath;
+    public float curveDropoffDistance; // NEW: Where exactly to drop the car on the new street
 }
 
 public struct EdgeStruct
@@ -24,17 +36,20 @@ public struct EdgeStruct
     public float speedLimit;
     public bool isOneWay;
 
-    // NEW: Pointers to the Connection Array
+    public float turnTriggerDistance; // NEW: The exact meter mark where THIS road's turn begins
+
     public int forwardConnectionStart;
     public int forwardConnectionCount;
-
     public int reverseConnectionStart;
     public int reverseConnectionCount;
 }
 
-// NEW: The Pre-Baked Turn Instruction
 public struct Connection
 {
     public int edgeIndex;
-    public bool driveForward; // Do we drive A->B or B->A on the next street?
+    public bool driveForward;
+    public int curveWaypointStartIndex;
+    public int curveWaypointCount;
+    public float curveLength;
+    public float dropoffDistance; // NEW: Passes the dynamic dropoff point to the CarData
 }
