@@ -270,7 +270,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CameraController
   pcPanSpeed: 1000
-  pcZoomSpeed: 10000
+  pcZoomSpeed: 5000
   touchPanSpeed: 0.5
   touchZoomSpeed: 0.5
   minZoom: 50
@@ -388,7 +388,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6d573ed31d81bc94381ed3b74d0bf120, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TrafficManager
-  initialCarCount: 5000
+  showDebugGizmos: 0
+  initialCarCount: 10000
   carVisualPrefab: {fileID: 3680965493718893742, guid: a51d5b1b409d29541a9d801481f472fe, type: 3}
 --- !u!4 &739983789
 Transform:
@@ -434,9 +435,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: eb724250b2e05ec44a47f2f9974e51b6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MapGenerator
-  geoJsonFile: {fileID: 4900000, guid: 8ac282221d24628429a9665cdfa41f83, type: 3}
+  geoJsonFile: {fileID: 4900000, guid: 08e9b3b645d634745a14a70243ec975c, type: 3}
   lineMaterial: {fileID: 10754, guid: 0000000000000000f000000000000000, type: 0}
   roadWidth: 8
+  showDebugGizmos: 0
   vertexPrefab: {fileID: 3188420195664783481, guid: b4388dde74911dd4193d8defe0fcf254, type: 3}
   showVertices: 1
 --- !u!4 &1161428263

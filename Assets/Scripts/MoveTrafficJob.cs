@@ -16,6 +16,7 @@ public struct MoveTrafficJob : IJobParallelFor
     [ReadOnly] public NativeArray<float3> laneWaypoints;
     [ReadOnly] public NativeArray<float3> intersectionWaypoints;
     [ReadOnly] public NativeArray<Connection> connections;
+    [ReadOnly] public NativeArray<int> laneTailCarIndices;
 
     public float deltaTime;
 
@@ -92,6 +93,29 @@ public struct MoveTrafficJob : IJobParallelFor
                     CarData leaderCar = cars[leaderMap.carIndex];
                     leaderSpeed = leaderCar.currentSpeed;
                     hasLeader = true;
+                }
+            }
+
+            // --- CROSS-LANE LOOK-AHEAD: See the tail car of the upcoming lane ---
+            if (car.upcomingConnectionIndex != -1)
+            {
+                Connection nextConn = connections[car.upcomingConnectionIndex];
+                int destLaneIndex = nextConn.laneIndex;
+                int tailIdx = laneTailCarIndices[destLaneIndex];
+
+                if (tailIdx != -1)
+                {
+                    CarData tailCar = cars[spatialData[tailIdx].carIndex];
+                    float distToLaneEnd = currentLane.length - car.distanceAlongLane;
+                    float crossLaneDist = distToLaneEnd + nextConn.curveLength + tailCar.distanceAlongLane - 4.0f;
+                    if (crossLaneDist < 0.1f) crossLaneDist = 0.1f;
+
+                    if (crossLaneDist < distanceToLeader)
+                    {
+                        distanceToLeader = crossLaneDist;
+                        leaderSpeed = tailCar.currentSpeed;
+                        hasLeader = true;
+                    }
                 }
             }
 

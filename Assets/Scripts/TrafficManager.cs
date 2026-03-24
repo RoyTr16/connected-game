@@ -26,6 +26,7 @@ public class TrafficManager : MonoBehaviour
     // The Raw Memory
     private NativeArray<CarData> _cars;
     private NativeArray<CarSpatialData> _spatialData;
+    private NativeArray<int> _laneTailCarIndices;
     private GraphFlattener _flattener;
 
     // Phase 1 Visuals (We will delete this entirely in Phase 3 when we use the GPU)
@@ -58,6 +59,7 @@ public class TrafficManager : MonoBehaviour
         // 3. Allocate Memory for the cars (Allocator.Persistent means it lives forever)
         _cars = new NativeArray<CarData>(initialCarCount, Allocator.Persistent);
         _spatialData = new NativeArray<CarSpatialData>(initialCarCount, Allocator.Persistent);
+        _laneTailCarIndices = new NativeArray<int>(totalLanes, Allocator.Persistent);
         _carVisuals = new Transform[initialCarCount];
 
         // 4. Spawn the traffic data
@@ -101,6 +103,14 @@ public class TrafficManager : MonoBehaviour
         mapHandle.Complete();
         _spatialData.Sort();
 
+        // --- 1b. FIND TAIL CARS PER LANE ---
+        FindLaneTailsJob tailJob = new FindLaneTailsJob
+        {
+            laneTailCarIndices = _laneTailCarIndices,
+            spatialData = _spatialData
+        };
+        tailJob.Schedule().Complete();
+
         // --- 2. THE MOVEMENT & LOGIC ---
         MoveTrafficJob moveJob = new MoveTrafficJob
         {
@@ -110,6 +120,7 @@ public class TrafficManager : MonoBehaviour
             laneWaypoints = _flattener.laneWaypoints,
             intersectionWaypoints = _flattener.intersectionWaypoints,
             connections = _flattener.nativeConnections,
+            laneTailCarIndices = _laneTailCarIndices,
             deltaTime = Time.deltaTime
         };
 
@@ -131,5 +142,6 @@ public class TrafficManager : MonoBehaviour
         if (_cars.IsCreated) _cars.Dispose();
         if (_flattener != null) _flattener.Dispose();
         if (_spatialData.IsCreated) _spatialData.Dispose();
+        if (_laneTailCarIndices.IsCreated) _laneTailCarIndices.Dispose();
     }
 }
