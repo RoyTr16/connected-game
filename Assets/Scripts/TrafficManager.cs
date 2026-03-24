@@ -22,6 +22,7 @@ public class TrafficManager : MonoBehaviour
 
     // The Raw Memory
     private NativeArray<CarData> _cars;
+    private NativeArray<CarSpatialData> _spatialData;
     private GraphFlattener _flattener;
 
     // Phase 1 Visuals (We will delete this entirely in Phase 3 when we use the GPU)
@@ -43,6 +44,7 @@ public class TrafficManager : MonoBehaviour
 
         // 3. Allocate Memory for the cars (Allocator.Persistent means it lives forever)
         _cars = new NativeArray<CarData>(initialCarCount, Allocator.Persistent);
+        _spatialData = new NativeArray<CarSpatialData>(initialCarCount, Allocator.Persistent);
         _carVisuals = new Transform[initialCarCount];
 
         // 4. Spawn the traffic data
@@ -76,22 +78,36 @@ public class TrafficManager : MonoBehaviour
     {
         if (!_cars.IsCreated) return;
 
-        // Setup the multithreaded math job
+        // --- 1. SPATIAL PARTITIONING (THE MAP & SORT) ---
+        MapSpatialDataJob mapJob = new MapSpatialDataJob
+        {
+            cars = _cars,
+            spatialData = _spatialData
+        };
+        // Schedule the map job
+        JobHandle mapHandle = mapJob.Schedule(_cars.Length, 64);
+
+        // Wait for mapping to finish, then sort the array on the Main Thread.
+        // (NativeArray.Sort uses highly optimized Native code under the hood).
+        mapHandle.Complete();
+        _spatialData.Sort();
+
+        // --- 2. THE MOVEMENT & LOGIC ---
         MoveTrafficJob moveJob = new MoveTrafficJob
         {
             cars = _cars,
             edges = _flattener.nativeEdges,
-            centerlineWaypoints = _flattener.centerlineWaypoints, // RENAMED
-            intersectionWaypoints = _flattener.intersectionWaypoints, // NEW
+            centerlineWaypoints = _flattener.centerlineWaypoints,
+            intersectionWaypoints = _flattener.intersectionWaypoints,
             connections = _flattener.nativeConnections,
+            // We will pass the sorted spatial array to the movement job in the next step!
             deltaTime = Time.deltaTime
         };
 
-        // Schedule and run the multithreaded jobs
-        JobHandle handle = moveJob.Schedule(_cars.Length, 64);
-        handle.Complete();
+        JobHandle moveHandle = moveJob.Schedule(_cars.Length, 64);
+        moveHandle.Complete();
 
-        // Standard Main Thread visual update
+        // --- 3. VISUALS ---
         for (int i = 0; i < _cars.Length; i++)
         {
             _carVisuals[i].position = _cars[i].position;
@@ -105,5 +121,6 @@ public class TrafficManager : MonoBehaviour
         // If we don't dispose of these, the computer will leak memory until it crashes.
         if (_cars.IsCreated) _cars.Dispose();
         if (_flattener != null) _flattener.Dispose();
+        if (_spatialData.IsCreated) _spatialData.Dispose();
     }
 }

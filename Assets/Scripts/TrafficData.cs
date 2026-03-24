@@ -1,3 +1,4 @@
+using System; // Required for IComparable
 using Unity.Mathematics;
 
 public static class TrafficState
@@ -52,4 +53,23 @@ public struct Connection
     public int curveWaypointCount;
     public float curveLength;
     public float dropoffDistance; // NEW: Passes the dynamic dropoff point to the CarData
+}
+
+// NEW: The lightweight sorting pointer
+public struct CarSpatialData : IComparable<CarSpatialData>
+{
+    public int carIndex;
+    public int edgeIndex;
+    public float distanceAlongEdge;
+
+    // This tells the Job System exactly how to sort the array
+    public int CompareTo(CarSpatialData other)
+    {
+        // 1. Group by Road (EdgeIndex)
+        int edgeComparison = edgeIndex.CompareTo(other.edgeIndex);
+        if (edgeComparison != 0) return edgeComparison;
+
+        // 2. Sort by Distance (Descending! So the car in "first place" is index 0)
+        return other.distanceAlongEdge.CompareTo(distanceAlongEdge);
+    }
 }
