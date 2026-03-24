@@ -14,7 +14,7 @@ public class GraphFlattener
     private Dictionary<LaneAuthoring, int> objectToLaneIndex = new Dictionary<LaneAuthoring, int>();
     private Dictionary<LaneAuthoring, Road> laneToRoad = new Dictionary<LaneAuthoring, Road>();
 
-    public void FlattenGraph(List<Road> allRoads)
+    public void FlattenGraph(List<Road> allRoads, List<OsmTurnRestriction> turnRestrictions)
     {
         // =====================================================
         // STEP 1: Extract all LaneAuthoring children into a flat list
@@ -87,9 +87,50 @@ public class GraphFlattener
 
             List<LaneAuthoring> targets = new List<LaneAuthoring>();
 
+            // Pre-check: does an "only_" restriction apply to this road at this vertex?
+            long fromWayId = roadA.osmWayId;
+            long viaNodeId = exitVertex.osmNodeId;
+            long onlyToWayId = -1;
+
+            foreach (OsmTurnRestriction r in turnRestrictions)
+            {
+                if (r.fromWayId == fromWayId && r.viaNodeId == viaNodeId
+                    && r.restrictionType.StartsWith("only_"))
+                {
+                    onlyToWayId = r.toWayId;
+                    break;
+                }
+            }
+
             foreach (Road adjRoad in exitVertex.connectedRoads)
             {
                 if (adjRoad == null) continue;
+
+                // --- FILTER 1: Implicit U-Turn Ban ---
+                if (adjRoad == roadA)
+                {
+                    // Allow U-turn only at physical dead-ends
+                    if (exitVertex.connectedRoads.Count > 1)
+                        continue;
+                }
+
+                // --- FILTER 3: "only_" restriction (checked before "no_") ---
+                if (onlyToWayId != -1 && adjRoad.osmWayId != onlyToWayId)
+                    continue;
+
+                // --- FILTER 2: "no_" restriction ---
+                bool blocked = false;
+                foreach (OsmTurnRestriction r in turnRestrictions)
+                {
+                    if (r.fromWayId == fromWayId && r.viaNodeId == viaNodeId
+                        && r.toWayId == adjRoad.osmWayId
+                        && r.restrictionType.StartsWith("no_"))
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+                if (blocked) continue;
 
                 LaneAuthoring[] adjLanes = adjRoad.GetComponentsInChildren<LaneAuthoring>();
                 foreach (LaneAuthoring laneB in adjLanes)

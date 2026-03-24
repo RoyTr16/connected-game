@@ -269,6 +269,26 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
+        // =====================================================
+        // POST-PARSE: Attach IntersectionAuthoring to all vertices
+        // =====================================================
+        foreach (var kvp in osmNodeToVertex)
+        {
+            long nodeId = kvp.Key;
+            Vertex vertex = kvp.Value;
+
+            IntersectionAuthoring ia = vertex.gameObject.AddComponent<IntersectionAuthoring>();
+            ia.osmNodeId = nodeId;
+
+            if (nodeTrafficRules.TryGetValue(nodeId, out string rule))
+            {
+                if (rule == "traffic_signals")
+                    ia.controlType = IntersectionControlType.TrafficLight;
+                else if (rule == "stop")
+                    ia.controlType = IntersectionControlType.StopSign;
+            }
+        }
+
         // Fire up the traffic engine now that the roads exist!
         if (TrafficManager.Instance != null)
         {

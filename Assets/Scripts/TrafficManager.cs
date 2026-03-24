@@ -43,7 +43,10 @@ public class TrafficManager : MonoBehaviour
 
         // 2. Flatten the Object-Oriented map into hardware-friendly Native memory
         _flattener = new GraphFlattener();
-        _flattener.FlattenGraph(allRoads);
+        List<OsmTurnRestriction> restrictions = MapGenerator.Instance != null
+            ? MapGenerator.Instance.turnRestrictions
+            : new List<OsmTurnRestriction>();
+        _flattener.FlattenGraph(allRoads, restrictions);
 
         int totalLanes = _flattener.nativeLanes.Length;
         if (totalLanes == 0)
