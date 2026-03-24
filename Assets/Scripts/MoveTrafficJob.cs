@@ -1,12 +1,18 @@
 using Unity.Burst;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe; // NEW: Required for the safety bypass
 using Unity.Jobs;
 using Unity.Mathematics;
 
 [BurstCompile]
 public struct MoveTrafficJob : IJobParallelFor
 {
+    // NEW: We disable the safety restriction because we are accessing this array
+    // via the sorted spatial pointers, rather than a direct 1:1 index mapping.
+    [NativeDisableParallelForRestriction]
     public NativeArray<CarData> cars;
+
+    [ReadOnly] public NativeArray<CarSpatialData> spatialData; // NEW: The sorted pointers
 
     [ReadOnly] public NativeArray<EdgeStruct> edges;
     [ReadOnly] public NativeArray<float3> centerlineWaypoints;
@@ -15,19 +21,77 @@ public struct MoveTrafficJob : IJobParallelFor
 
     public float deltaTime;
 
-    public void Execute(int index)
+    public void Execute(int i)
     {
-        CarData car = cars[index];
+        // 1. READ FROM THE SORTED POINTER
+        CarSpatialData mapData = spatialData[i];
+        int carIndex = mapData.carIndex;
+
+        // 2. GET THE ACTUAL CAR DATA
+        CarData car = cars[carIndex];
 
         // =========================================================================
-        // PHASE 1: THE BRAIN (Update Distance & State Machine)
+        // PHASE 1: THE BRAIN (Intelligent Driver Model & State Machine)
         // =========================================================================
         if (car.state == TrafficState.Driving)
         {
             EdgeStruct currentEdge = edges[car.currentEdgeIndex];
+
+            // --- THE IDM (CRASH AVOIDANCE) ---
+            float a = 2.0f;  // Max acceleration (m/s^2)
+            float b = 1.5f;  // Comfortable deceleration (m/s^2)
+            float T = 1.2f;  // Safe time headway (seconds)
+            float s0 = 2.5f; // Minimum bumper-to-bumper gap (meters)
+
+            float v = car.currentSpeed;
+            float v0 = currentEdge.speedLimit;
+
+            float leaderSpeed = v0;
+            float distanceToLeader = 999f;
+            bool hasLeader = false;
+
+            // Look exactly one index backward in the sorted array to find the car ahead!
+            if (i > 0)
+            {
+                CarSpatialData leaderMap = spatialData[i - 1];
+
+                // Are they on the exact same road?
+                if (leaderMap.edgeIndex == car.currentEdgeIndex)
+                {
+                    distanceToLeader = leaderMap.distanceAlongEdge - car.distanceAlongEdge - 4.0f; // 4.0f is car length
+                    if (distanceToLeader < 0.1f) distanceToLeader = 0.1f; // Prevent division by zero
+
+                    CarData leaderCar = cars[leaderMap.carIndex];
+                    leaderSpeed = leaderCar.currentSpeed;
+                    hasLeader = true;
+                }
+            }
+
+            float accel = 0f;
+
+            if (hasLeader)
+            {
+                // IDM Formula for following a car
+                float deltaV = v - leaderSpeed;
+                float s_star = s0 + (v * T) + ((v * deltaV) / (2f * math.sqrt(a * b)));
+                if (s_star < s0) s_star = s0; // Never desire a gap smaller than the minimum
+
+                accel = a * (1f - math.pow(v / v0, 4f) - math.pow(s_star / distanceToLeader, 2f));
+            }
+            else
+            {
+                // IDM Formula for an empty road
+                accel = a * (1f - math.pow(v / v0, 4f));
+            }
+
+            // Apply acceleration and clamp speed so they don't reverse
+            car.currentSpeed += accel * deltaTime;
+            if (car.currentSpeed < 0f) car.currentSpeed = 0f;
+
+            // Move the car physically
             car.distanceAlongEdge += car.currentSpeed * deltaTime;
 
-            // Trigger the intersection turn
+            // --- TURN TRIGGER LOGIC ---
             if (car.distanceAlongEdge >= currentEdge.turnTriggerDistance)
             {
                 int connStart = car.drivingForward ? currentEdge.forwardConnectionStart : currentEdge.reverseConnectionStart;
@@ -39,7 +103,6 @@ public struct MoveTrafficJob : IJobParallelFor
                     int randomOffset = rand.NextInt(0, connCount);
                     Connection nextTurn = connections[connStart + randomOffset];
 
-                    // Transition State
                     car.state = TrafficState.NavigatingIntersection;
                     car.currentEdgeIndex = nextTurn.edgeIndex;
                     car.drivingForward = nextTurn.driveForward;
@@ -48,7 +111,6 @@ public struct MoveTrafficJob : IJobParallelFor
                     car.maxSpeed = nextTurn.curveLength;
                     car.curveDropoffDistance = nextTurn.dropoffDistance;
 
-                    // Perfectly carry over momentum without double-adding deltaTime
                     car.curveDistanceAlongPath = car.distanceAlongEdge - currentEdge.turnTriggerDistance;
                     car.randomSeed = rand.NextUInt();
                 }
@@ -57,18 +119,16 @@ public struct MoveTrafficJob : IJobParallelFor
         else if (car.state == TrafficState.NavigatingIntersection)
         {
             float intersectionTurnSpeed = 8f;
-            car.curveDistanceAlongPath += intersectionTurnSpeed * deltaTime;
 
-            // Trigger the return to normal driving
-            if (car.curveDistanceAlongPath >= car.maxSpeed) // maxSpeed temporarily holds curveLength
+            // For Phase 2, we just force cars to move smoothly through the intersection without crashing math
+            car.currentSpeed = intersectionTurnSpeed;
+            car.curveDistanceAlongPath += car.currentSpeed * deltaTime;
+
+            if (car.curveDistanceAlongPath >= car.maxSpeed)
             {
                 car.state = TrafficState.Driving;
-
-                // Perfectly carry over momentum into the new street
                 float overflow = car.curveDistanceAlongPath - car.maxSpeed;
                 car.distanceAlongEdge = car.curveDropoffDistance + overflow;
-
-                // Restore actual road speed limit
                 car.maxSpeed = edges[car.currentEdgeIndex].speedLimit;
             }
         }
@@ -76,6 +136,7 @@ public struct MoveTrafficJob : IJobParallelFor
         // =========================================================================
         // PHASE 2: THE PHYSICS (Calculate exact visual position ONCE per frame)
         // =========================================================================
+        // (This entire section remains completely unchanged from your current code)
         if (car.state == TrafficState.Driving)
         {
             EdgeStruct currentEdge = edges[car.currentEdgeIndex];
@@ -83,14 +144,13 @@ public struct MoveTrafficJob : IJobParallelFor
             float distanceTracked = 0f;
             int startWp = currentEdge.startWaypointIndex;
 
-            for (int i = 0; i < currentEdge.waypointCount - 1; i++)
+            for (int w = 0; w < currentEdge.waypointCount - 1; w++)
             {
-                float3 wpA = centerlineWaypoints[startWp + i];
-                float3 wpB = centerlineWaypoints[startWp + i + 1];
+                float3 wpA = centerlineWaypoints[startWp + w];
+                float3 wpB = centerlineWaypoints[startWp + w + 1];
                 float segmentLength = math.distance(wpA, wpB);
 
-                // The "|| i == currentEdge.waypointCount - 2" is a safety net for floating point rounding errors
-                if (effectiveDistance <= distanceTracked + segmentLength || i == currentEdge.waypointCount - 2)
+                if (effectiveDistance <= distanceTracked + segmentLength || w == currentEdge.waypointCount - 2)
                 {
                     float segmentProgress = math.clamp((effectiveDistance - distanceTracked) / segmentLength, 0f, 1f);
                     float3 centerPosition = math.lerp(wpA, wpB, segmentProgress);
@@ -99,7 +159,6 @@ public struct MoveTrafficJob : IJobParallelFor
                     float3 carDirection = car.drivingForward ? edgeDirection : -edgeDirection;
                     float3 rightVector = math.normalize(new float3(carDirection.y, -carDirection.x, 0f));
 
-                    // EXACT SNAP - No more rubber-banding!
                     car.position = centerPosition + (rightVector * 1.5f);
 
                     quaternion targetRotation = quaternion.LookRotationSafe(carDirection, new float3(0, 0, -1f));
@@ -114,21 +173,19 @@ public struct MoveTrafficJob : IJobParallelFor
             float distTracked = 0f;
             int startWp = car.currentCurveWaypointStartIndex;
 
-            for (int i = 0; i < car.curveWaypointCount - 1; i++)
+            for (int w = 0; w < car.curveWaypointCount - 1; w++)
             {
-                float3 wpA = intersectionWaypoints[startWp + i];
-                float3 wpB = intersectionWaypoints[startWp + i + 1];
+                float3 wpA = intersectionWaypoints[startWp + w];
+                float3 wpB = intersectionWaypoints[startWp + w + 1];
                 float segmentLength = math.distance(wpA, wpB);
 
-                if (car.curveDistanceAlongPath <= distTracked + segmentLength || i == car.curveWaypointCount - 2)
+                if (car.curveDistanceAlongPath <= distTracked + segmentLength || w == car.curveWaypointCount - 2)
                 {
                     float progress = math.clamp((car.curveDistanceAlongPath - distTracked) / segmentLength, 0f, 1f);
-
-                    // EXACT SNAP to the perfectly smooth Bezier curve
                     car.position = math.lerp(wpA, wpB, progress);
 
                     float3 carDirection = math.normalize(wpB - wpA);
-                    if (math.lengthsq(carDirection) > 0.001f) // Safety against zero-vectors
+                    if (math.lengthsq(carDirection) > 0.001f)
                     {
                         quaternion targetRotation = quaternion.LookRotationSafe(carDirection, new float3(0, 0, -1f));
                         car.rotation = math.slerp(car.rotation, targetRotation, deltaTime * 25f);
@@ -139,6 +196,7 @@ public struct MoveTrafficJob : IJobParallelFor
             }
         }
 
-        cars[index] = car; // Save back to RAM
+        // Save back to RAM using the true car index!
+        cars[carIndex] = car;
     }
 }

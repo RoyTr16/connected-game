@@ -96,11 +96,11 @@ public class TrafficManager : MonoBehaviour
         MoveTrafficJob moveJob = new MoveTrafficJob
         {
             cars = _cars,
+            spatialData = _spatialData, // NEW: Pass the sorted pointers!
             edges = _flattener.nativeEdges,
             centerlineWaypoints = _flattener.centerlineWaypoints,
             intersectionWaypoints = _flattener.intersectionWaypoints,
             connections = _flattener.nativeConnections,
-            // We will pass the sorted spatial array to the movement job in the next step!
             deltaTime = Time.deltaTime
         };
 
