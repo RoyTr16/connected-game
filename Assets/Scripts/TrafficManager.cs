@@ -56,9 +56,12 @@ public class TrafficManager : MonoBehaviour
             {
                 currentEdgeIndex = randomEdge,
                 distanceAlongEdge = 0f,
-                currentSpeed = maxSpeed * 0.3f, // Convert km/h to m/s roughly
+                currentSpeed = maxSpeed * 0.3f,
                 maxSpeed = maxSpeed,
-                state = 0
+                state = 0,
+
+                drivingForward = true, // Start them off driving A->B
+                randomSeed = (uint)UnityEngine.Random.Range(1, 1000000) // MUST be > 0
             };
             _cars[i] = newCar;
 
@@ -79,6 +82,7 @@ public class TrafficManager : MonoBehaviour
             cars = _cars,
             edges = _flattener.nativeEdges,
             waypoints = _flattener.nativeWaypoints,
+            connections = _flattener.nativeConnections, // NEW
             deltaTime = Time.deltaTime
         };
 

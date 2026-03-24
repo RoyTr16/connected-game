@@ -3,62 +3,76 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 
-// [BurstCompile] tells Unity to bypass standard C# compilation and translate
-// this directly into highly optimized, machine-level assembly code.
 [BurstCompile]
 public struct MoveTrafficJob : IJobParallelFor
 {
-    // Read/Write: The CPU needs to update the car's position
     public NativeArray<CarData> cars;
 
-    // ReadOnly: The CPU just needs to look at the map data
     [ReadOnly] public NativeArray<EdgeStruct> edges;
     [ReadOnly] public NativeArray<float3> waypoints;
+    [ReadOnly] public NativeArray<Connection> connections; // NEW
 
     public float deltaTime;
 
-    // This method is executed once for every single car in the array
     public void Execute(int index)
     {
         CarData car = cars[index];
         EdgeStruct currentEdge = edges[car.currentEdgeIndex];
 
-        // 1. Move the car forward mathematically
         car.distanceAlongEdge += car.currentSpeed * deltaTime;
 
-        // PHASE 1 LOOP: If they reach the end of the road, teleport back to the start.
-        // (We will replace this with intersection routing in Phase 2).
+        // --- INTERSECTION NAVIGATION ---
         if (car.distanceAlongEdge >= currentEdge.length)
         {
-            car.distanceAlongEdge = 0f;
+            int connStart = car.drivingForward ? currentEdge.forwardConnectionStart : currentEdge.reverseConnectionStart;
+            int connCount = car.drivingForward ? currentEdge.forwardConnectionCount : currentEdge.reverseConnectionCount;
+
+            if (connCount > 0)
+            {
+                // Pull a random number to pick a turn
+                Unity.Mathematics.Random rand = new Unity.Mathematics.Random(car.randomSeed);
+                int randomOffset = rand.NextInt(0, connCount);
+
+                Connection nextTurn = connections[connStart + randomOffset];
+
+                // Update the Car's Brain
+                car.currentEdgeIndex = nextTurn.edgeIndex;
+                car.drivingForward = nextTurn.driveForward;
+                car.distanceAlongEdge -= currentEdge.length; // Carry over excess speed into the next road
+
+                // Roll the random seed so they don't pick the same path next time
+                car.randomSeed = rand.NextUInt();
+                currentEdge = edges[car.currentEdgeIndex];
+            }
         }
 
-        // 2. Find EXACTLY where on the curved road the car is located
+        // --- PHYSICAL MOVEMENT ---
+        // If driving backward, we just read the waypoints in reverse mathematically
+        float effectiveDistance = car.drivingForward ? car.distanceAlongEdge : (currentEdge.length - car.distanceAlongEdge);
+
         float distanceTracked = 0f;
         int startWp = currentEdge.startWaypointIndex;
 
-        // Loop through the tiny straight segments that make up the curved road
         for (int i = 0; i < currentEdge.waypointCount - 1; i++)
         {
             float3 wpA = waypoints[startWp + i];
             float3 wpB = waypoints[startWp + i + 1];
             float segmentLength = math.distance(wpA, wpB);
 
-            if (car.distanceAlongEdge <= distanceTracked + segmentLength)
+            if (effectiveDistance <= distanceTracked + segmentLength)
             {
-                // The car is on this specific segment! Interpolate its exact 3D position.
-                float segmentProgress = (car.distanceAlongEdge - distanceTracked) / segmentLength;
+                float segmentProgress = (effectiveDistance - distanceTracked) / segmentLength;
                 car.position = math.lerp(wpA, wpB, segmentProgress);
 
-                // Calculate the rotation so the car faces down the road
                 float3 direction = math.normalize(wpB - wpA);
+                if (!car.drivingForward) direction = -direction; // Flip the car 180 degrees!
+
                 car.rotation = quaternion.LookRotationSafe(direction, math.up());
                 break;
             }
             distanceTracked += segmentLength;
         }
 
-        // 3. Save the math back to the main array in RAM
         cars[index] = car;
     }
 }
