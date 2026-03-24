@@ -270,6 +270,200 @@ public partial class @PlayerControls: IInputActionCollection2, IDisposable
                     ""isPartOfComposite"": false
                 }
             ]
+        },
+        {
+            ""name"": ""CityCamera"",
+            ""id"": ""62af118e-be5b-4d0f-b113-ad80e8b2ea18"",
+            ""actions"": [
+                {
+                    ""name"": ""Pan"",
+                    ""type"": ""Value"",
+                    ""id"": ""6106f4f4-44f6-4588-aee6-a2c52365ee84"",
+                    ""expectedControlType"": ""Vector2"",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": true
+                },
+                {
+                    ""name"": ""Zoom"",
+                    ""type"": ""Value"",
+                    ""id"": ""b3a0cad7-dc0b-4389-82d1-d48b105b7033"",
+                    ""expectedControlType"": ""Axis"",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": true
+                },
+                {
+                    ""name"": ""Twist"",
+                    ""type"": ""Value"",
+                    ""id"": ""39b950dd-d855-4f21-9e37-d051897ed846"",
+                    ""expectedControlType"": ""Axis"",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": true
+                },
+                {
+                    ""name"": ""DragRotate"",
+                    ""type"": ""Button"",
+                    ""id"": ""776485d3-45ac-49d3-99de-a849da2ada85"",
+                    ""expectedControlType"": """",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": false
+                },
+                {
+                    ""name"": ""PointerDelta"",
+                    ""type"": ""Value"",
+                    ""id"": ""242516d8-c935-4aea-b723-2c574191483f"",
+                    ""expectedControlType"": ""Vector2"",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": true
+                },
+                {
+                    ""name"": ""Boost"",
+                    ""type"": ""Button"",
+                    ""id"": ""4c6327ab-0e97-4d75-9124-4e33ea0351a6"",
+                    ""expectedControlType"": """",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": false
+                }
+            ],
+            ""bindings"": [
+                {
+                    ""name"": ""2D Vector"",
+                    ""id"": ""84ead1f9-9659-4006-9725-409b85f36f02"",
+                    ""path"": ""2DVector"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Pan"",
+                    ""isComposite"": true,
+                    ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": ""up"",
+                    ""id"": ""835dafc1-1b99-43ee-886c-e1e35536f26f"",
+                    ""path"": ""<Keyboard>/w"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Pan"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": true
+                },
+                {
+                    ""name"": ""down"",
+                    ""id"": ""e5a61e67-65fc-4428-8e43-5853874b82fc"",
+                    ""path"": ""<Keyboard>/s"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Pan"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": true
+                },
+                {
+                    ""name"": ""left"",
+                    ""id"": ""16fea659-e944-4bce-bbda-12c6195b1b4b"",
+                    ""path"": ""<Keyboard>/a"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Pan"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": true
+                },
+                {
+                    ""name"": ""right"",
+                    ""id"": ""7dddf992-5e01-4f63-98e3-94f3a2090b2f"",
+                    ""path"": ""<Keyboard>/d"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Pan"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": true
+                },
+                {
+                    ""name"": """",
+                    ""id"": ""e1e8a078-abde-4b7d-9d92-af7574e96ecc"",
+                    ""path"": ""<Mouse>/scroll/y"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Zoom"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": ""1D Axis"",
+                    ""id"": ""d70a1a25-6920-47d0-9273-9a4cad503193"",
+                    ""path"": ""1DAxis"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Twist"",
+                    ""isComposite"": true,
+                    ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": ""negative"",
+                    ""id"": ""c705084c-3f2a-4f3f-86bb-863e0e08136c"",
+                    ""path"": ""<Keyboard>/e"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Twist"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": true
+                },
+                {
+                    ""name"": ""positive"",
+                    ""id"": ""3ec855c4-9fdd-4537-801c-9e495644f42f"",
+                    ""path"": ""<Keyboard>/q"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Twist"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": true
+                },
+                {
+                    ""name"": """",
+                    ""id"": ""dc70409d-198f-4051-b812-ee3a7677fe6a"",
+                    ""path"": ""<Mouse>/middleButton"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""DragRotate"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": """",
+                    ""id"": ""3f3c2dcc-280b-4083-a06e-8d2219cf17a6"",
+                    ""path"": ""<Mouse>/delta"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""PointerDelta"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": """",
+                    ""id"": ""c6f6d9bc-1582-436e-b58f-d09e1d626549"",
+                    ""path"": ""<Keyboard>/leftShift"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Boost"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
+                }
+            ]
         }
     ],
     ""controlSchemes"": []
@@ -282,11 +476,20 @@ public partial class @PlayerControls: IInputActionCollection2, IDisposable
         m_Gameplay_Zoom = m_Gameplay.FindAction("Zoom", throwIfNotFound: true);
         m_Gameplay_Finalize = m_Gameplay.FindAction("Finalize", throwIfNotFound: true);
         m_Gameplay_Undo = m_Gameplay.FindAction("Undo", throwIfNotFound: true);
+        // CityCamera
+        m_CityCamera = asset.FindActionMap("CityCamera", throwIfNotFound: true);
+        m_CityCamera_Pan = m_CityCamera.FindAction("Pan", throwIfNotFound: true);
+        m_CityCamera_Zoom = m_CityCamera.FindAction("Zoom", throwIfNotFound: true);
+        m_CityCamera_Twist = m_CityCamera.FindAction("Twist", throwIfNotFound: true);
+        m_CityCamera_DragRotate = m_CityCamera.FindAction("DragRotate", throwIfNotFound: true);
+        m_CityCamera_PointerDelta = m_CityCamera.FindAction("PointerDelta", throwIfNotFound: true);
+        m_CityCamera_Boost = m_CityCamera.FindAction("Boost", throwIfNotFound: true);
     }
 
     ~@PlayerControls()
     {
         UnityEngine.Debug.Assert(!m_Gameplay.enabled, "This will cause a leak and performance issues, PlayerControls.Gameplay.Disable() has not been called.");
+        UnityEngine.Debug.Assert(!m_CityCamera.enabled, "This will cause a leak and performance issues, PlayerControls.CityCamera.Disable() has not been called.");
     }
 
     /// <summary>
@@ -509,6 +712,157 @@ public partial class @PlayerControls: IInputActionCollection2, IDisposable
     /// Provides a new <see cref="GameplayActions" /> instance referencing this action map.
     /// </summary>
     public GameplayActions @Gameplay => new GameplayActions(this);
+
+    // CityCamera
+    private readonly InputActionMap m_CityCamera;
+    private List<ICityCameraActions> m_CityCameraActionsCallbackInterfaces = new List<ICityCameraActions>();
+    private readonly InputAction m_CityCamera_Pan;
+    private readonly InputAction m_CityCamera_Zoom;
+    private readonly InputAction m_CityCamera_Twist;
+    private readonly InputAction m_CityCamera_DragRotate;
+    private readonly InputAction m_CityCamera_PointerDelta;
+    private readonly InputAction m_CityCamera_Boost;
+    /// <summary>
+    /// Provides access to input actions defined in input action map "CityCamera".
+    /// </summary>
+    public struct CityCameraActions
+    {
+        private @PlayerControls m_Wrapper;
+
+        /// <summary>
+        /// Construct a new instance of the input action map wrapper class.
+        /// </summary>
+        public CityCameraActions(@PlayerControls wrapper) { m_Wrapper = wrapper; }
+        /// <summary>
+        /// Provides access to the underlying input action "CityCamera/Pan".
+        /// </summary>
+        public InputAction @Pan => m_Wrapper.m_CityCamera_Pan;
+        /// <summary>
+        /// Provides access to the underlying input action "CityCamera/Zoom".
+        /// </summary>
+        public InputAction @Zoom => m_Wrapper.m_CityCamera_Zoom;
+        /// <summary>
+        /// Provides access to the underlying input action "CityCamera/Twist".
+        /// </summary>
+        public InputAction @Twist => m_Wrapper.m_CityCamera_Twist;
+        /// <summary>
+        /// Provides access to the underlying input action "CityCamera/DragRotate".
+        /// </summary>
+        public InputAction @DragRotate => m_Wrapper.m_CityCamera_DragRotate;
+        /// <summary>
+        /// Provides access to the underlying input action "CityCamera/PointerDelta".
+        /// </summary>
+        public InputAction @PointerDelta => m_Wrapper.m_CityCamera_PointerDelta;
+        /// <summary>
+        /// Provides access to the underlying input action "CityCamera/Boost".
+        /// </summary>
+        public InputAction @Boost => m_Wrapper.m_CityCamera_Boost;
+        /// <summary>
+        /// Provides access to the underlying input action map instance.
+        /// </summary>
+        public InputActionMap Get() { return m_Wrapper.m_CityCamera; }
+        /// <inheritdoc cref="UnityEngine.InputSystem.InputActionMap.Enable()" />
+        public void Enable() { Get().Enable(); }
+        /// <inheritdoc cref="UnityEngine.InputSystem.InputActionMap.Disable()" />
+        public void Disable() { Get().Disable(); }
+        /// <inheritdoc cref="UnityEngine.InputSystem.InputActionMap.enabled" />
+        public bool enabled => Get().enabled;
+        /// <summary>
+        /// Implicitly converts an <see ref="CityCameraActions" /> to an <see ref="InputActionMap" /> instance.
+        /// </summary>
+        public static implicit operator InputActionMap(CityCameraActions set) { return set.Get(); }
+        /// <summary>
+        /// Adds <see cref="InputAction.started"/>, <see cref="InputAction.performed"/> and <see cref="InputAction.canceled"/> callbacks provided via <param cref="instance" /> on all input actions contained in this map.
+        /// </summary>
+        /// <param name="instance">Callback instance.</param>
+        /// <remarks>
+        /// If <paramref name="instance" /> is <c>null</c> or <paramref name="instance"/> have already been added this method does nothing.
+        /// </remarks>
+        /// <seealso cref="CityCameraActions" />
+        public void AddCallbacks(ICityCameraActions instance)
+        {
+            if (instance == null || m_Wrapper.m_CityCameraActionsCallbackInterfaces.Contains(instance)) return;
+            m_Wrapper.m_CityCameraActionsCallbackInterfaces.Add(instance);
+            @Pan.started += instance.OnPan;
+            @Pan.performed += instance.OnPan;
+            @Pan.canceled += instance.OnPan;
+            @Zoom.started += instance.OnZoom;
+            @Zoom.performed += instance.OnZoom;
+            @Zoom.canceled += instance.OnZoom;
+            @Twist.started += instance.OnTwist;
+            @Twist.performed += instance.OnTwist;
+            @Twist.canceled += instance.OnTwist;
+            @DragRotate.started += instance.OnDragRotate;
+            @DragRotate.performed += instance.OnDragRotate;
+            @DragRotate.canceled += instance.OnDragRotate;
+            @PointerDelta.started += instance.OnPointerDelta;
+            @PointerDelta.performed += instance.OnPointerDelta;
+            @PointerDelta.canceled += instance.OnPointerDelta;
+            @Boost.started += instance.OnBoost;
+            @Boost.performed += instance.OnBoost;
+            @Boost.canceled += instance.OnBoost;
+        }
+
+        /// <summary>
+        /// Removes <see cref="InputAction.started"/>, <see cref="InputAction.performed"/> and <see cref="InputAction.canceled"/> callbacks provided via <param cref="instance" /> on all input actions contained in this map.
+        /// </summary>
+        /// <remarks>
+        /// Calling this method when <paramref name="instance" /> have not previously been registered has no side-effects.
+        /// </remarks>
+        /// <seealso cref="CityCameraActions" />
+        private void UnregisterCallbacks(ICityCameraActions instance)
+        {
+            @Pan.started -= instance.OnPan;
+            @Pan.performed -= instance.OnPan;
+            @Pan.canceled -= instance.OnPan;
+            @Zoom.started -= instance.OnZoom;
+            @Zoom.performed -= instance.OnZoom;
+            @Zoom.canceled -= instance.OnZoom;
+            @Twist.started -= instance.OnTwist;
+            @Twist.performed -= instance.OnTwist;
+            @Twist.canceled -= instance.OnTwist;
+            @DragRotate.started -= instance.OnDragRotate;
+            @DragRotate.performed -= instance.OnDragRotate;
+            @DragRotate.canceled -= instance.OnDragRotate;
+            @PointerDelta.started -= instance.OnPointerDelta;
+            @PointerDelta.performed -= instance.OnPointerDelta;
+            @PointerDelta.canceled -= instance.OnPointerDelta;
+            @Boost.started -= instance.OnBoost;
+            @Boost.performed -= instance.OnBoost;
+            @Boost.canceled -= instance.OnBoost;
+        }
+
+        /// <summary>
+        /// Unregisters <param cref="instance" /> and unregisters all input action callbacks via <see cref="CityCameraActions.UnregisterCallbacks(ICityCameraActions)" />.
+        /// </summary>
+        /// <seealso cref="CityCameraActions.UnregisterCallbacks(ICityCameraActions)" />
+        public void RemoveCallbacks(ICityCameraActions instance)
+        {
+            if (m_Wrapper.m_CityCameraActionsCallbackInterfaces.Remove(instance))
+                UnregisterCallbacks(instance);
+        }
+
+        /// <summary>
+        /// Replaces all existing callback instances and previously registered input action callbacks associated with them with callbacks provided via <param cref="instance" />.
+        /// </summary>
+        /// <remarks>
+        /// If <paramref name="instance" /> is <c>null</c>, calling this method will only unregister all existing callbacks but not register any new callbacks.
+        /// </remarks>
+        /// <seealso cref="CityCameraActions.AddCallbacks(ICityCameraActions)" />
+        /// <seealso cref="CityCameraActions.RemoveCallbacks(ICityCameraActions)" />
+        /// <seealso cref="CityCameraActions.UnregisterCallbacks(ICityCameraActions)" />
+        public void SetCallbacks(ICityCameraActions instance)
+        {
+            foreach (var item in m_Wrapper.m_CityCameraActionsCallbackInterfaces)
+                UnregisterCallbacks(item);
+            m_Wrapper.m_CityCameraActionsCallbackInterfaces.Clear();
+            AddCallbacks(instance);
+        }
+    }
+    /// <summary>
+    /// Provides a new <see cref="CityCameraActions" /> instance referencing this action map.
+    /// </summary>
+    public CityCameraActions @CityCamera => new CityCameraActions(this);
     /// <summary>
     /// Interface to implement callback methods for all input action callbacks associated with input actions defined by "Gameplay" which allows adding and removing callbacks.
     /// </summary>
@@ -558,5 +912,55 @@ public partial class @PlayerControls: IInputActionCollection2, IDisposable
         /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
         /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
         void OnUndo(InputAction.CallbackContext context);
+    }
+    /// <summary>
+    /// Interface to implement callback methods for all input action callbacks associated with input actions defined by "CityCamera" which allows adding and removing callbacks.
+    /// </summary>
+    /// <seealso cref="CityCameraActions.AddCallbacks(ICityCameraActions)" />
+    /// <seealso cref="CityCameraActions.RemoveCallbacks(ICityCameraActions)" />
+    public interface ICityCameraActions
+    {
+        /// <summary>
+        /// Method invoked when associated input action "Pan" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnPan(InputAction.CallbackContext context);
+        /// <summary>
+        /// Method invoked when associated input action "Zoom" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnZoom(InputAction.CallbackContext context);
+        /// <summary>
+        /// Method invoked when associated input action "Twist" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnTwist(InputAction.CallbackContext context);
+        /// <summary>
+        /// Method invoked when associated input action "DragRotate" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnDragRotate(InputAction.CallbackContext context);
+        /// <summary>
+        /// Method invoked when associated input action "PointerDelta" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnPointerDelta(InputAction.CallbackContext context);
+        /// <summary>
+        /// Method invoked when associated input action "Boost" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnBoost(InputAction.CallbackContext context);
     }
 }

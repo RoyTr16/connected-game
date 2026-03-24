@@ -19,6 +19,7 @@ public class MapGenerator : MonoBehaviour
     [Header("Rendering Settings")]
     public Material lineMaterial;
     public float roadWidth = 8f;
+    public float layerHeightOffset = -5.0f;
 
     [Header("Debug Visualization")]
     public bool showDebugGizmos = false; // Default to false for performance
@@ -193,6 +194,13 @@ public class MapGenerator : MonoBehaviour
             RoadProperties props = RoadProperties.ParseFromOsmTags(tags);
             JArray nodeIds = (JArray)way["nodes"];
 
+            // Read the OSM layer tag for vertical separation (bridges, tunnels)
+            int layer = 0;
+            string layerStr = tags["layer"]?.ToString();
+            if (!string.IsNullOrEmpty(layerStr))
+                int.TryParse(layerStr, out layer);
+            float zElevation = layer * layerHeightOffset;
+
             Vertex lastVertex = null;
             List<Vector3> currentWaypoints = new List<Vector3>();
 
@@ -203,6 +211,8 @@ public class MapGenerator : MonoBehaviour
                 if (!osmNodePositions.TryGetValue(nodeId, out Vector3 worldPos))
                     continue; // Skip if the node wasn't in our export
 
+                // Apply vertical offset for bridges/tunnels
+                worldPos.z = zElevation;
                 currentWaypoints.Add(worldPos);
 
                 // Split at intersection nodes (referenced by multiple ways or at endpoints)
@@ -417,12 +427,12 @@ public class MapGenerator : MonoBehaviour
     }
 
     // ==========================================
-    // LANE GEOMETRY MATH (2D X/Y Plane, Z=0)
+    // LANE GEOMETRY MATH (X/Y Plane with Z elevation)
     // ==========================================
 
     /// <summary>
     /// Offsets every waypoint to the right of the flow direction using
-    /// the 2D perpendicular: right = (dir.y, -dir.x, 0).
+    /// the 2D perpendicular: right = (dir.y, -dir.x, 0). Preserves Z.
     /// </summary>
     private static List<Vector3> OffsetWaypointsRight(List<Vector3> waypoints, float offset)
     {
@@ -436,9 +446,11 @@ public class MapGenerator : MonoBehaviour
             else
                 dir = (waypoints[i] - waypoints[i - 1]).normalized;
 
-            // 2D perpendicular right-hand vector
+            // 2D perpendicular right-hand vector (Z untouched)
             Vector3 right = new Vector3(dir.y, -dir.x, 0f);
-            result.Add(waypoints[i] + right * offset);
+            Vector3 offset3 = waypoints[i] + right * offset;
+            offset3.z = waypoints[i].z;
+            result.Add(offset3);
         }
 
         return result;
