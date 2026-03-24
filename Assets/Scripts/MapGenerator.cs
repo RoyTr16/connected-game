@@ -158,6 +158,12 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
+        // Fire up the traffic engine now that the roads exist!
+        if (TrafficManager.Instance != null)
+        {
+            TrafficManager.Instance.InitializeTraffic();
+        }
+
         Debug.Log($"Spatial Graph Generated! Vertices: {activeVertices.Count} | Edges: {edgeCount}");
     }
     public Edge CreateEdge(Vertex vA, Vertex vB, List<Vector3> waypoints, RoadProperties props, string nameSuffix = "")
