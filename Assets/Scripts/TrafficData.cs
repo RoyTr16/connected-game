@@ -26,7 +26,10 @@ public struct CarData
     public int currentCurveWaypointStartIndex;
     public int curveWaypointCount;
     public float curveDistanceAlongPath;
-    public float curveDropoffDistance; // NEW: Where exactly to drop the car on the new street
+    public float curveDropoffDistance;
+
+    // NEW: The Pre-Planned Route
+    public int upcomingConnectionIndex;
 }
 
 public struct EdgeStruct
@@ -36,8 +39,7 @@ public struct EdgeStruct
     public float length;
     public float speedLimit;
     public bool isOneWay;
-
-    public float turnTriggerDistance; // NEW: The exact meter mark where THIS road's turn begins
+    public float turnTriggerDistance;
 
     public int forwardConnectionStart;
     public int forwardConnectionCount;
@@ -52,7 +54,10 @@ public struct Connection
     public int curveWaypointStartIndex;
     public int curveWaypointCount;
     public float curveLength;
-    public float dropoffDistance; // NEW: Passes the dynamic dropoff point to the CarData
+    public float dropoffDistance;
+
+    // NEW: Mathematical flag for straight-aways
+    public bool isStraight;
 }
 
 // NEW: The lightweight sorting pointer

@@ -31,35 +31,72 @@ public struct MoveTrafficJob : IJobParallelFor
         CarData car = cars[carIndex];
 
         // =========================================================================
-        // PHASE 1: THE BRAIN (Intelligent Driver Model & State Machine)
+        // PHASE 1: THE BRAIN (Intelligent Driver Model & Route Pre-Planning)
         // =========================================================================
         if (car.state == TrafficState.Driving)
         {
             EdgeStruct currentEdge = edges[car.currentEdgeIndex];
 
-            // --- THE IDM (CRASH AVOIDANCE) ---
-            float a = 2.0f;  // Max acceleration (m/s^2)
-            float b = 1.5f;  // Comfortable deceleration (m/s^2)
-            float T = 1.2f;  // Safe time headway (seconds)
-            float s0 = 2.5f; // Minimum bumper-to-bumper gap (meters)
+            // --- 1. ROUTE PRE-PLANNING ---
+            // If the car just spawned or just finished a turn, it needs to roll its next move.
+            if (car.upcomingConnectionIndex == -1)
+            {
+                int connStart = car.drivingForward ? currentEdge.forwardConnectionStart : currentEdge.reverseConnectionStart;
+                int connCount = car.drivingForward ? currentEdge.forwardConnectionCount : currentEdge.reverseConnectionCount;
+
+                if (connCount > 0)
+                {
+                    Unity.Mathematics.Random rand = new Unity.Mathematics.Random(car.randomSeed);
+                    car.upcomingConnectionIndex = connStart + rand.NextInt(0, connCount);
+                    car.randomSeed = rand.NextUInt();
+                }
+            }
+
+            // Understand the planned route
+            bool goingStraight = false;
+            if (car.upcomingConnectionIndex != -1)
+            {
+                goingStraight = connections[car.upcomingConnectionIndex].isStraight;
+            }
+
+            // Dynamic Trigger: Straight cars drive to the absolute end of the edge. Turners trigger early.
+            float triggerDist = goingStraight ? currentEdge.length : currentEdge.turnTriggerDistance;
+
+            // --- 2. THE IDM & LOOK-AHEAD BRAKING ---
+            float a = 2.0f;
+            float b = 1.5f;
+            float T = 1.2f;
+            float s0 = 2.5f;
 
             float v = car.currentSpeed;
             float v0 = currentEdge.speedLimit;
+
+            // LOOK-AHEAD BRAKING: If a sharp turn is coming up, dynamically lower the desired speed limit
+            if (!goingStraight)
+            {
+                float distToTurn = triggerDist - car.distanceAlongEdge;
+                // Start braking 40 meters before the corner
+                if (distToTurn > 0f && distToTurn < 40f)
+                {
+                    float intersectionTurnSpeed = 8f;
+                    v0 = math.min(v0, math.lerp(intersectionTurnSpeed, currentEdge.speedLimit, distToTurn / 40f));
+                }
+            }
+
+            // ... [Keep the exact same spatialData lookup and IDM acceleration math here] ...
+            // (The leaderSpeed, distanceToLeader, hasLeader, and accel formulas stay identical)
 
             float leaderSpeed = v0;
             float distanceToLeader = 999f;
             bool hasLeader = false;
 
-            // Look exactly one index backward in the sorted array to find the car ahead!
             if (i > 0)
             {
                 CarSpatialData leaderMap = spatialData[i - 1];
-
-                // Are they on the exact same road?
                 if (leaderMap.edgeIndex == car.currentEdgeIndex)
                 {
-                    distanceToLeader = leaderMap.distanceAlongEdge - car.distanceAlongEdge - 4.0f; // 4.0f is car length
-                    if (distanceToLeader < 0.1f) distanceToLeader = 0.1f; // Prevent division by zero
+                    distanceToLeader = leaderMap.distanceAlongEdge - car.distanceAlongEdge - 4.0f;
+                    if (distanceToLeader < 0.1f) distanceToLeader = 0.1f;
 
                     CarData leaderCar = cars[leaderMap.carIndex];
                     leaderSpeed = leaderCar.currentSpeed;
@@ -68,7 +105,6 @@ public struct MoveTrafficJob : IJobParallelFor
             }
 
             float accel = 0f;
-
             if (hasLeader)
             {
                 float deltaV = v - leaderSpeed;
@@ -77,44 +113,36 @@ public struct MoveTrafficJob : IJobParallelFor
 
                 accel = a * (1f - math.pow(v / v0, 4f) - math.pow(s_star / distanceToLeader, 2f));
 
-                // --- NEW: THE HARD PHYSICAL CLAMP (Anti-Clipping) ---
-                // If they get dangerously close, forbid them from exceeding the leader's speed
-                if (distanceToLeader < 2.0f)
-                {
-                    car.currentSpeed = math.min(car.currentSpeed, leaderSpeed);
-                }
-
-                // --- NEW: ANTI-DEADLOCK ---
-                // If they somehow clipped inside each other, force the follower to bleed speed so they separate
-                if (distanceToLeader < 0.1f)
-                {
-                    car.currentSpeed = leaderSpeed * 0.8f;
-                }
+                if (distanceToLeader < 2.0f) car.currentSpeed = math.min(car.currentSpeed, leaderSpeed);
+                if (distanceToLeader < 0.1f) car.currentSpeed = leaderSpeed * 0.8f;
             }
             else
             {
                 accel = a * (1f - math.pow(v / v0, 4f));
             }
 
-            // Apply acceleration and clamp speed so they don't reverse
             car.currentSpeed += accel * deltaTime;
             if (car.currentSpeed < 0f) car.currentSpeed = 0f;
-
-            // Move the car physically
             car.distanceAlongEdge += car.currentSpeed * deltaTime;
 
-            // --- TURN TRIGGER LOGIC ---
-            if (car.distanceAlongEdge >= currentEdge.turnTriggerDistance)
+            // --- 3. TURN EXECUTION ---
+            if (car.distanceAlongEdge >= triggerDist && car.upcomingConnectionIndex != -1)
             {
-                int connStart = car.drivingForward ? currentEdge.forwardConnectionStart : currentEdge.reverseConnectionStart;
-                int connCount = car.drivingForward ? currentEdge.forwardConnectionCount : currentEdge.reverseConnectionCount;
+                Connection nextTurn = connections[car.upcomingConnectionIndex];
 
-                if (connCount > 0)
+                if (goingStraight)
                 {
-                    Unity.Mathematics.Random rand = new Unity.Mathematics.Random(car.randomSeed);
-                    int randomOffset = rand.NextInt(0, connCount);
-                    Connection nextTurn = connections[connStart + randomOffset];
+                    // Seamlessly snap to the new street without losing speed or state
+                    car.currentEdgeIndex = nextTurn.edgeIndex;
+                    car.drivingForward = nextTurn.driveForward;
+                    car.distanceAlongEdge = car.distanceAlongEdge - currentEdge.length; // Carry overflow
 
+                    // Clear the planned route so they roll a new one next frame
+                    car.upcomingConnectionIndex = -1;
+                }
+                else
+                {
+                    // Standard Bezier Curve Transition
                     car.state = TrafficState.NavigatingIntersection;
                     car.currentEdgeIndex = nextTurn.edgeIndex;
                     car.drivingForward = nextTurn.driveForward;
@@ -124,7 +152,9 @@ public struct MoveTrafficJob : IJobParallelFor
                     car.curveDropoffDistance = nextTurn.dropoffDistance;
 
                     car.curveDistanceAlongPath = car.distanceAlongEdge - currentEdge.turnTriggerDistance;
-                    car.randomSeed = rand.NextUInt();
+
+                    // Clear the planned route
+                    car.upcomingConnectionIndex = -1;
                 }
             }
         }

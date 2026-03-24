@@ -163,13 +163,18 @@ public class GraphFlattener
         int curveStart = currentCurveList.Count;
         foreach(var p in curvePoints) currentCurveList.Add(p);
 
+        // NEW: Calculate if this is a straight-away (Dot product > 0.95 is roughly < 18 degrees)
+        float dotAngle = math.dot(carDirA, carDirB);
+        bool isStraightPath = dotAngle > 0.95f;
+
         return new Connection {
             edgeIndex = objectToEdgeIndex[turn.nextEdge],
             driveForward = turn.nextDriveForward,
             curveWaypointStartIndex = curveStart,
             curveWaypointCount = curvePoints.Count,
             curveLength = CalculateCurveLength_OOP(curvePoints),
-            dropoffDistance = curveDistB // Save where to drop the car!
+            dropoffDistance = curveDistB,
+            isStraight = isStraightPath // Pass the flag to the Job
         };
     }
 

@@ -62,8 +62,9 @@ public class TrafficManager : MonoBehaviour
                 maxSpeed = maxSpeed,
                 state = 0,
 
-                drivingForward = true, // Start them off driving A->B
-                randomSeed = (uint)UnityEngine.Random.Range(1, 1000000) // MUST be > 0
+                drivingForward = true,
+                randomSeed = (uint)UnityEngine.Random.Range(1, 1000000),
+                upcomingConnectionIndex = -1 // MUST BE -1 so the Job knows to roll a route!
             };
             _cars[i] = newCar;
 
