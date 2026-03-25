@@ -251,13 +251,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 519420028}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.38268343, y: 0, z: 0, w: 0.92387956}
-  m_LocalPosition: {x: 0, y: -500, z: -500}
+  m_LocalRotation: {x: 0.5, y: 0, z: 0, w: 0.8660254}
+  m_LocalPosition: {x: 0, y: 500, z: -200}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: -45, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 60, y: 0, z: 0}
 --- !u!114 &519420033
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -288,13 +288,59 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a0ddc57091557d84a8a15798cf7f60a2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CityBuilderCamera
-  panSpeed: 300
-  boostMultiplier: 2
-  zoomSpeed: 2000
-  minHeight: -5000
-  maxHeight: -75
-  rotationSpeed: 5
+  panSpeed: 400
+  boostMultiplier: 3
+  zoomSpeed: 10000
+  minHeight: 50
+  maxHeight: 5000
+  rotationSpeed: 10
   smoothing: 0.15
+--- !u!1 &585893657
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 585893659}
+  - component: {fileID: 585893658}
+  m_Layer: 0
+  m_Name: CitySpawner
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &585893658
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 585893657}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 19628f5614cb4a54591af10d7433b0d3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CitySpawner
+  prefab3Way: {fileID: 1648641480963478291, guid: f8debd681a5810840baf42899ccf035e, type: 3}
+  generateNow: 0
+--- !u!4 &585893659
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 585893657}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 14.97181, y: -0, z: -5.0832}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &619394800
 GameObject:
   m_ObjectHideFlags: 0
@@ -403,7 +449,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 739983787}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 6d573ed31d81bc94381ed3b74d0bf120, type: 3}
   m_Name: 
@@ -456,12 +502,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MapGenerator
   geoJsonFile: {fileID: 4900000, guid: 08e9b3b645d634745a14a70243ec975c, type: 3}
-  lineMaterial: {fileID: 10754, guid: 0000000000000000f000000000000000, type: 0}
-  roadWidth: 8
+  laneWidth: 3
   layerHeightOffset: -5
   asphaltMaterial: {fileID: 2100000, guid: fca230367de0be2459c16a6dab7d378e, type: 2}
   showDebugGizmos: 0
   vertexPrefab: {fileID: 3188420195664783481, guid: b4388dde74911dd4193d8defe0fcf254, type: 3}
+  citySpawner: {fileID: 585893658}
   showVertices: 0
 --- !u!4 &1161428263
 Transform:
@@ -550,3 +596,4 @@ SceneRoots:
   - {fileID: 1161428263}
   - {fileID: 1538031041}
   - {fileID: 739983789}
+  - {fileID: 585893659}

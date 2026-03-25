@@ -1,7 +1,6 @@
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
-using System;
 
 public class MapGenerator : MonoBehaviour
 {
@@ -29,6 +28,8 @@ public class MapGenerator : MonoBehaviour
 
     [Header("Simulation Objects")]
     public GameObject vertexPrefab;
+    [Header("Visual Generators")]
+    public CitySpawner citySpawner;
     [SerializeField] private bool showVertices = true;
 
     private float mapScale = 111000f;
@@ -112,8 +113,9 @@ public class MapGenerator : MonoBehaviour
             }
 
             float x = (float)((lon - originLonLat.x) * mapScale * Mathf.Cos(originLonLat.y * Mathf.Deg2Rad));
-            float y = (float)((lat - originLonLat.y) * mapScale);
-            Vector3 worldPos = new Vector3(x, y, 0f);
+            float z = (float)((lat - originLonLat.y) * mapScale);
+            Vector3 worldPos = new Vector3(x, 0f, z); // The ground is now the XZ plane!
+
             osmNodePositions[id] = worldPos;
 
             JToken tags = node["tags"];
@@ -183,7 +185,7 @@ public class MapGenerator : MonoBehaviour
             string layerStr = tags["layer"]?.ToString();
             if (!string.IsNullOrEmpty(layerStr))
                 int.TryParse(layerStr, out layer);
-            float zElevation = layer * layerHeightOffset;
+            float yElevation = layer * layerHeightOffset; // Elevation is now the Y axis
 
             Vertex lastVertex = null;
             List<Vector3> currentWaypoints = new List<Vector3>();
@@ -195,7 +197,7 @@ public class MapGenerator : MonoBehaviour
                 if (!osmNodePositions.TryGetValue(nodeId, out Vector3 worldPos))
                     continue;
 
-                worldPos.z = zElevation;
+                worldPos.y = yElevation;
                 currentWaypoints.Add(worldPos);
 
                 if (nodeWayCount.ContainsKey(nodeId) && nodeWayCount[nodeId] > 1)
@@ -277,10 +279,16 @@ public class MapGenerator : MonoBehaviour
             }
         }
 
-        if (TrafficManager.Instance != null)
+        if (citySpawner != null)
         {
-            TrafficManager.Instance.InitializeTraffic();
+            Debug.Log("Triggering Visual City Spawner...");
+            citySpawner.SpawnIntersections();
         }
+
+        // if (TrafficManager.Instance != null)
+        // {
+        //     TrafficManager.Instance.InitializeTraffic();
+        // }
 
         Debug.Log($"OSM Graph Generated! Nodes: {osmNodePositions.Count} | Vertices: {activeVertices.Count} | Roads: {roadCount} | Lanes: {laneCount} | Traffic Rules: {nodeTrafficRules.Count} | Turn Restrictions: {turnRestrictions.Count}");
     }
@@ -290,7 +298,7 @@ public class MapGenerator : MonoBehaviour
         if (osmNodeToVertex.TryGetValue(osmNodeId, out Vertex existing))
             return existing;
 
-        string coordKey = $"{worldPos.x:F2}_{worldPos.y:F2}";
+        string coordKey = $"{worldPos.x:F2}_{worldPos.y:F2}_{worldPos.z:F2}";
         if (activeVertices.TryGetValue(coordKey, out Vertex coordMatch))
         {
             osmNodeToVertex[osmNodeId] = coordMatch;
@@ -381,9 +389,12 @@ public class MapGenerator : MonoBehaviour
             else
                 dir = (waypoints[i] - waypoints[i - 1]).normalized;
 
-            Vector3 right = new Vector3(dir.y, -dir.x, 0f);
-            Vector3 offset3 = waypoints[i] + right * offset;
-            offset3.z = waypoints[i].z;
+            // THE FIX: Cross product for the XZ plane (Y is up)
+            Vector3 right = new Vector3(dir.z, 0f, -dir.x);
+            Vector3 offset3 = waypoints[i] + (right * offset);
+
+            // Keep the Y elevation consistent
+            offset3.y = waypoints[i].y;
             result.Add(offset3);
         }
         return result;

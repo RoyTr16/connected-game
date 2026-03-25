@@ -15,4 +15,13 @@ public class Road : MonoBehaviour
 
     [Header("Geometry")]
     public List<Vector3> centerlineWaypoints = new List<Vector3>();
+
+    public Vertex GetOppositeNode(Vertex node)
+    {
+        // the variables that hold the two ends of your road!
+        if (vertexA == node) return vertexB;
+        if (vertexB == node) return vertexA;
+
+        return null;
+    }
 }
