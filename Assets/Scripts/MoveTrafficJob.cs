@@ -13,7 +13,7 @@ public struct MoveTrafficJob : IJobParallelFor
     [ReadOnly] public NativeArray<LaneStruct> lanes;
     [ReadOnly] public NativeArray<float3> laneWaypoints;
     [ReadOnly] public NativeArray<Connection> connections;
-    [ReadOnly] public NativeArray<int> laneTailCarIndices;
+    [ReadOnly] public NativeArray<int> laneTailCarIndices; // The lookahead brain is back!
 
     public float deltaTime;
 
@@ -25,7 +25,7 @@ public struct MoveTrafficJob : IJobParallelFor
         LaneStruct currentLane = lanes[car.currentLaneIndex];
 
         // =========================================================================
-        // PHASE 1: ROUTE PRE-PLANNING & BRAIN (IDM)
+        // PHASE 1: ROUTE PRE-PLANNING & BRAIN
         // =========================================================================
         if (car.upcomingConnectionIndex == -1)
         {
@@ -38,12 +38,15 @@ public struct MoveTrafficJob : IJobParallelFor
         }
 
         float v = car.currentSpeed;
-        float v0 = currentLane.speedLimit;
+        float v0 = math.max(currentLane.speedLimit, 5f); // NaN Protection
+        float leaderSpeed = v0;
+        float distanceToLeader = 999f;
+        bool hasLeader = false;
 
+        // Turn braking (Slow down for curves)
         if (car.upcomingConnectionIndex != -1)
         {
             Connection conn = connections[car.upcomingConnectionIndex];
-            // Lookahead distance now respects the trim!
             float distToEnd = (currentLane.length - conn.exitTrim) - car.distanceAlongLane;
             if (distToEnd > 0f && distToEnd < 40f)
             {
@@ -52,10 +55,7 @@ public struct MoveTrafficJob : IJobParallelFor
             }
         }
 
-        float leaderSpeed = v0;
-        float distanceToLeader = 999f;
-        bool hasLeader = false;
-
+        // Same-Lane Lookahead
         if (i > 0)
         {
             CarSpatialData leaderMap = spatialData[i - 1];
@@ -68,6 +68,7 @@ public struct MoveTrafficJob : IJobParallelFor
             }
         }
 
+        // --- RESTORED & FIXED CROSS-LANE LOOKAHEAD ---
         if (car.upcomingConnectionIndex != -1)
         {
             Connection nextConn = connections[car.upcomingConnectionIndex];
@@ -77,8 +78,23 @@ public struct MoveTrafficJob : IJobParallelFor
             if (tailIdx != -1)
             {
                 CarData tailCar = cars[spatialData[tailIdx].carIndex];
-                float distToLaneEnd = currentLane.length - car.distanceAlongLane;
-                float crossLaneDist = distToLaneEnd + nextConn.curveLength + tailCar.distanceAlongLane - 4.0f;
+                float triggerDistance = currentLane.length - nextConn.exitTrim;
+
+                // Calculate EXACT remaining distance to the new lane without going negative!
+                float remainingDistanceToNewLane = 0f;
+                if (car.distanceAlongLane <= triggerDistance)
+                {
+                    // Still on the straight road
+                    remainingDistanceToNewLane = (triggerDistance - car.distanceAlongLane) + nextConn.curveLength;
+                }
+                else
+                {
+                    // Already in the intersection curve
+                    float excess = car.distanceAlongLane - triggerDistance;
+                    remainingDistanceToNewLane = nextConn.curveLength - excess;
+                }
+
+                float crossLaneDist = remainingDistanceToNewLane + tailCar.distanceAlongLane - 4.0f;
 
                 if (crossLaneDist < 0.1f) crossLaneDist = 0.1f;
                 if (crossLaneDist < distanceToLeader)
@@ -90,6 +106,7 @@ public struct MoveTrafficJob : IJobParallelFor
             }
         }
 
+        // IDM Acceleration Physics
         float a = 2.0f; float b = 1.5f; float T = 1.2f; float s0 = 2.5f; float accel = 0f;
 
         if (hasLeader)
@@ -98,6 +115,7 @@ public struct MoveTrafficJob : IJobParallelFor
             float s_star = s0 + (v * T) + ((v * deltaV) / (2f * math.sqrt(a * b)));
             if (s_star < s0) s_star = s0;
             accel = a * (1f - math.pow(v / v0, 4f) - math.pow(s_star / distanceToLeader, 2f));
+
             if (distanceToLeader < 2.0f) car.currentSpeed = math.min(car.currentSpeed, leaderSpeed);
             if (distanceToLeader < 0.1f) car.currentSpeed = leaderSpeed * 0.8f;
         }
@@ -110,26 +128,22 @@ public struct MoveTrafficJob : IJobParallelFor
         if (car.currentSpeed < 0f) car.currentSpeed = 0f;
         car.distanceAlongLane += car.currentSpeed * deltaTime;
 
+
         // =========================================================================
-        // PHASE 2: THE SYNCED LANE TRANSITION
+        // PHASE 2 & 3: PHYSICS (Snap & Bezier Logic)
         // =========================================================================
         bool inIntersection = false;
 
         if (car.upcomingConnectionIndex != -1)
         {
             Connection conn = connections[car.upcomingConnectionIndex];
-
-            // Trigger 5 meters EARLY
             float triggerDistance = currentLane.length - conn.exitTrim;
             float totalPathLength = triggerDistance + conn.curveLength;
 
             if (car.distanceAlongLane >= totalPathLength)
             {
                 car.currentLaneIndex = conn.laneIndex;
-
-                // Land 5 meters DEEP into the new lane (plus any frame overflow)
                 car.distanceAlongLane = conn.entryTrim + (car.distanceAlongLane - totalPathLength);
-
                 car.upcomingConnectionIndex = -1;
                 currentLane = lanes[car.currentLaneIndex];
             }
@@ -139,34 +153,34 @@ public struct MoveTrafficJob : IJobParallelFor
             }
         }
 
-        // =========================================================================
-        // PHASE 3: THE PHYSICS (Position & Rotation)
-        // =========================================================================
         if (inIntersection)
         {
             Connection conn = connections[car.upcomingConnectionIndex];
-
-            // Calculate excess distance from the trimmed start!
             float triggerDistance = currentLane.length - conn.exitTrim;
             float excessDistance = car.distanceAlongLane - triggerDistance;
 
-            float t = math.clamp(excessDistance / conn.curveLength, 0f, 1f);
+            float safeCurveLength = math.max(conn.curveLength, 0.01f);
+            float t = math.clamp(excessDistance / safeCurveLength, 0f, 1f);
 
             float u = 1f - t; float tt = t * t; float uu = u * u;
-            float3 p0 = conn.p0; float3 p1 = conn.p1; float3 p2 = conn.p2;
+            float uuu = uu * u; float ttt = tt * t;
 
-            float3 pos = uu * p0;
-            pos += 2f * u * t * p1;
-            pos += tt * p2;
+            float3 p0 = conn.p0; float3 p1 = conn.p1;
+            float3 p2 = conn.p2; float3 p3 = conn.p3;
+
+            float3 pos = uuu * p0;
+            pos += 3f * uu * t * p1;
+            pos += 3f * u * tt * p2;
+            pos += ttt * p3;
 
             car.position = pos;
 
-            float3 tangent = 2f * u * (p1 - p0) + 2f * t * (p2 - p1);
+            float3 tangent = 3f * uu * (p1 - p0) + 6f * u * t * (p2 - p1) + 3f * tt * (p3 - p2);
             if (math.lengthsq(tangent) > 0.001f)
             {
                 float3 dir = math.normalize(tangent);
                 quaternion targetRot = quaternion.LookRotationSafe(dir, new float3(0, 0, -1f));
-                car.rotation = math.slerp(car.rotation, targetRot, deltaTime * 20f);
+                car.rotation = math.slerp(car.rotation, targetRot, deltaTime * 30f);
             }
         }
         else
@@ -182,12 +196,14 @@ public struct MoveTrafficJob : IJobParallelFor
 
                 if (car.distanceAlongLane <= distanceTracked + segmentLength || w == currentLane.waypointCount - 2)
                 {
-                    float progress = math.clamp((car.distanceAlongLane - distanceTracked) / segmentLength, 0f, 1f);
+                    float safeSegLen = math.max(segmentLength, 0.001f);
+                    float progress = math.clamp((car.distanceAlongLane - distanceTracked) / safeSegLen, 0f, 1f);
                     car.position = math.lerp(wpA, wpB, progress);
 
-                    float3 dir = math.normalize(wpB - wpA);
+                    float3 dir = wpB - wpA;
                     if (math.lengthsq(dir) > 0.001f)
                     {
+                        dir = math.normalize(dir);
                         quaternion targetRot = quaternion.LookRotationSafe(dir, new float3(0, 0, -1f));
                         car.rotation = math.slerp(car.rotation, targetRot, deltaTime * 15f);
                     }

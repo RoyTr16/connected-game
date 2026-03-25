@@ -46,9 +46,8 @@ public struct Connection
     public float3 p0;
     public float3 p1;
     public float3 p2;
+    public float3 p3; // The new Cubic control point!
     public float curveLength;
-
-    // The missing synchronization variables!
     public float exitTrim;
     public float entryTrim;
 }

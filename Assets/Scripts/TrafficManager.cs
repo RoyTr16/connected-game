@@ -7,7 +7,6 @@ using System.Linq;
 
 public class TrafficManager : MonoBehaviour
 {
-
     public static TrafficManager Instance { get; private set; }
 
     private void Awake()
@@ -26,7 +25,7 @@ public class TrafficManager : MonoBehaviour
     // The Raw Memory
     private NativeArray<CarData> _cars;
     private NativeArray<CarSpatialData> _spatialData;
-    private NativeArray<int> _laneTailCarIndices;
+    private NativeArray<int> laneTailCarIndices;
     private GraphFlattener _flattener;
 
     // Phase 1 Visuals (We will delete this entirely in Phase 3 when we use the GPU)
@@ -67,7 +66,10 @@ public class TrafficManager : MonoBehaviour
         // 3. Allocate Memory for the cars (Allocator.Persistent means it lives forever)
         _cars = new NativeArray<CarData>(initialCarCount, Allocator.Persistent);
         _spatialData = new NativeArray<CarSpatialData>(initialCarCount, Allocator.Persistent);
-        _laneTailCarIndices = new NativeArray<int>(totalLanes, Allocator.Persistent);
+
+        // Properly allocating the lookahead array based on total lanes!
+        laneTailCarIndices = new NativeArray<int>(totalLanes, Allocator.Persistent);
+
         _carVisuals = new Transform[initialCarCount];
 
         // 4. Spawn the traffic data
@@ -100,7 +102,7 @@ public class TrafficManager : MonoBehaviour
     {
         if (!_cars.IsCreated) return;
 
-        // --- 1. SPATIAL PARTITIONING (THE MAP & SORT) ---
+        // --- 1. SPATIAL PARTITIONING & SORT ---
         MapSpatialDataJob mapJob = new MapSpatialDataJob
         {
             cars = _cars,
@@ -108,18 +110,20 @@ public class TrafficManager : MonoBehaviour
         };
         JobHandle mapHandle = mapJob.Schedule(_cars.Length, 64);
 
+        // We MUST complete this here so the main thread can sort the array
         mapHandle.Complete();
         _spatialData.Sort();
 
-        // --- 1b. FIND TAIL CARS PER LANE ---
+        // --- 2. THE TAIL FINDER ---
         FindLaneTailsJob tailJob = new FindLaneTailsJob
         {
-            laneTailCarIndices = _laneTailCarIndices,
-            spatialData = _spatialData
+            spatialData = _spatialData,
+            laneTailCarIndices = laneTailCarIndices // Fed perfectly
         };
-        tailJob.Schedule().Complete();
+        // Schedule it (no dependency needed here since we just Completed the mapHandle above)
+        JobHandle tailHandle = tailJob.Schedule();
 
-        // --- 2. THE MOVEMENT & LOGIC ---
+        // --- 3. THE MOVEMENT & LOGIC ---
         MoveTrafficJob moveJob = new MoveTrafficJob
         {
             cars = _cars,
@@ -127,14 +131,15 @@ public class TrafficManager : MonoBehaviour
             lanes = _flattener.nativeLanes,
             laneWaypoints = _flattener.laneWaypoints,
             connections = _flattener.nativeConnections,
-            laneTailCarIndices = _laneTailCarIndices,
+            laneTailCarIndices = laneTailCarIndices, // Fed perfectly
             deltaTime = Time.deltaTime
         };
 
-        JobHandle moveHandle = moveJob.Schedule(_cars.Length, 64);
+        // Schedule the move job, telling it to wait for the tail finder to finish
+        JobHandle moveHandle = moveJob.Schedule(_cars.Length, 64, tailHandle);
         moveHandle.Complete();
 
-        // --- 3. VISUALS ---
+        // --- 4. VISUALS ---
         for (int i = 0; i < _cars.Length; i++)
         {
             Vector3 pos = _cars[i].position;
@@ -147,10 +152,9 @@ public class TrafficManager : MonoBehaviour
     private void OnDestroy()
     {
         // CRITICAL: C# Garbage Collection ignores NativeArrays.
-        // If we don't dispose of these, the computer will leak memory until it crashes.
         if (_cars.IsCreated) _cars.Dispose();
         if (_flattener != null) _flattener.Dispose();
         if (_spatialData.IsCreated) _spatialData.Dispose();
-        if (_laneTailCarIndices.IsCreated) _laneTailCarIndices.Dispose();
+        if (laneTailCarIndices.IsCreated) laneTailCarIndices.Dispose(); // Memory leak plugged!
     }
 }

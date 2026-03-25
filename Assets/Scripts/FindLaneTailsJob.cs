@@ -5,18 +5,24 @@ using Unity.Jobs;
 [BurstCompile]
 public struct FindLaneTailsJob : IJob
 {
-    [WriteOnly] public NativeArray<int> laneTailCarIndices;
     [ReadOnly] public NativeArray<CarSpatialData> spatialData;
+    public NativeArray<int> laneTailCarIndices;
 
     public void Execute()
     {
-        // Reset all to -1 (no tail car)
+        // 1. Reset all lanes to "empty" (-1)
         for (int i = 0; i < laneTailCarIndices.Length; i++)
+        {
             laneTailCarIndices[i] = -1;
+        }
 
-        // spatialData is sorted by laneIndex ASC, then distanceAlongLane DESC.
-        // The LAST entry for each lane is the car furthest back (lowest distance).
+        // 2. Sweep the sorted array.
+        // Because it's sorted by distance descending, the last car we see for a lane
+        // is guaranteed to be the car with the lowest distance (the tail).
         for (int i = 0; i < spatialData.Length; i++)
-            laneTailCarIndices[spatialData[i].laneIndex] = i;
+        {
+            int lane = spatialData[i].laneIndex;
+            laneTailCarIndices[lane] = i;
+        }
     }
 }
