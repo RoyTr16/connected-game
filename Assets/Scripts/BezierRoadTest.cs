@@ -1,7 +1,8 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-[ExecuteAlways] // This lets us see the mesh in the Editor without hitting Play!
+[ExecuteAlways]
+[RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class BezierRoadTest : MonoBehaviour
 {
     public IntersectionNode nodeA;
@@ -9,15 +10,42 @@ public class BezierRoadTest : MonoBehaviour
     public Material asphaltMaterial;
 
     [Range(2, 50)]
-    public int edgeResolution = 15; // How many segments make up the curve
+    public int edgeResolution = 15;
 
     private MeshFilter mf;
     private MeshRenderer mr;
     private Mesh generatedMesh;
 
+    private void OnEnable()
+    {
+        mf = GetComponent<MeshFilter>();
+        mr = GetComponent<MeshRenderer>();
+    }
+
+    // --- THE CRITICAL FIX IS HERE ---
+    private void OnDisable()
+    {
+        // 1. Force the MeshFilter to let go of the mesh BEFORE we destroy it.
+        // This stops the Inspector from trying to read a dead object during recompile.
+        if (mf != null)
+        {
+            mf.sharedMesh = null;
+        }
+
+        // 2. Safely destroy the mesh
+        if (generatedMesh != null)
+        {
+            if (Application.isPlaying)
+                Destroy(generatedMesh);
+            else
+                DestroyImmediate(generatedMesh);
+
+            generatedMesh = null;
+        }
+    }
+
     void Update()
     {
-        // Only run if we have both nodes assigned
         if (nodeA == null || nodeB == null) return;
 
         List<RoadSocket> socketsA = nodeA.GetSockets();
@@ -25,40 +53,22 @@ public class BezierRoadTest : MonoBehaviour
 
         if (socketsA.Count == 0 || socketsB.Count == 0) return;
 
-        // For this test, just grab the first socket from each intersection
-        RoadSocket startSocket = socketsA[0];
-        RoadSocket endSocket = socketsB[0];
-
-        GenerateRoadMesh(startSocket, endSocket);
+        GenerateRoadMesh(socketsA[0], socketsB[0]);
     }
 
     private void GenerateRoadMesh(RoadSocket start, RoadSocket end)
     {
-        if (mf == null)
-        {
-            if (!gameObject.TryGetComponent(out mf))
-                mf = gameObject.AddComponent<MeshFilter>();
-        }
+        if (mr.sharedMaterial != asphaltMaterial)
+            mr.sharedMaterial = asphaltMaterial;
 
-        if (mr == null)
-        {
-            if (!gameObject.TryGetComponent(out mr))
-                mr = gameObject.AddComponent<MeshRenderer>();
-        }
-
-        mr.sharedMaterial = asphaltMaterial;
-
-        // 1. Memory Leak Fix: Create the mesh ONCE and reuse it
         if (generatedMesh == null)
         {
             generatedMesh = new Mesh { name = "BezierRoadMesh" };
-            mf.sharedMesh = generatedMesh; // MUST use sharedMesh in the Editor!
+            generatedMesh.hideFlags = HideFlags.DontSave;
         }
 
-        // Clear the old data instead of making a new object
         generatedMesh.Clear();
 
-        // 2. Setup the 4 Bezier Points
         float distance = Vector3.Distance(start.Position, end.Position);
         float tangentLength = distance * 0.4f;
 
@@ -67,7 +77,6 @@ public class BezierRoadTest : MonoBehaviour
         Vector3 p2 = end.Position + (end.Forward * tangentLength);
         Vector3 p3 = end.Position;
 
-        // 3. Prepare Mesh Data
         int numVertices = (edgeResolution + 1) * 2;
         Vector3[] vertices = new Vector3[numVertices];
         Vector2[] uvs = new Vector2[numVertices];
@@ -76,7 +85,6 @@ public class BezierRoadTest : MonoBehaviour
         float accumulatedDistance = 0f;
         Vector3 previousCenter = p0;
 
-        // 4. Walk along the curve and extrude the road
         for (int i = 0; i <= edgeResolution; i++)
         {
             float t = i / (float)edgeResolution;
@@ -95,7 +103,6 @@ public class BezierRoadTest : MonoBehaviour
             uvs[i * 2 + 1] = new Vector2(1f, accumulatedDistance / 10f);
         }
 
-        // 5. Stitch the triangles together
         int vertIndex = 0;
         int triIndex = 0;
         for (int i = 0; i < edgeResolution; i++)
@@ -112,14 +119,18 @@ public class BezierRoadTest : MonoBehaviour
             triIndex += 6;
         }
 
-        // 6. Assign the new data to our single, cached mesh object
         generatedMesh.vertices = vertices;
         generatedMesh.uv = uvs;
         generatedMesh.triangles = triangles;
         generatedMesh.RecalculateNormals();
+
+        // Reassign the updated mesh
+        if (mf.sharedMesh != generatedMesh)
+        {
+            mf.sharedMesh = generatedMesh;
+        }
     }
 
-    // Standard Cubic Bezier Math
     Vector3 CalculateBezierPoint(float t, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
     {
         float u = 1 - t;
@@ -127,11 +138,9 @@ public class BezierRoadTest : MonoBehaviour
         float uu = u * u;
         float uuu = uu * u;
         float ttt = tt * t;
-
         return uuu * p0 + 3 * uu * t * p1 + 3 * u * tt * p2 + ttt * p3;
     }
 
-    // Derivative of the Bezier (gives us the forward vector at any point)
     Vector3 CalculateBezierTangent(float t, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
     {
         float u = 1 - t;
